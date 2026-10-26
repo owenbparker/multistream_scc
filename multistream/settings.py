@@ -53,7 +53,11 @@ def defaults():
     return {"destinations": [new_destination(p) for p in DEFAULT_ORDER],
             "lan": False,          # let other PCs on the network stream in
             "encoder": "auto",     # for re-encoded (cropped) outputs
-            "tokens": {}}          # destination id -> login refresh token (Twitch viewers)
+            "tokens": {},          # destination id -> login refresh token (Twitch viewers)
+            # Stream profiles: which platforms to send to. The chosen one's
+            # platforms are the ones switched on.
+            "profiles": [{"name": "Main", "platforms": []}],
+            "profile": "Main"}
 
 
 def clean_destination(d, old=None):
@@ -107,12 +111,15 @@ class Settings:
             log(f"Couldn't read {os.path.basename(self.path)} ({e}); using defaults", "warn")
             return
         data = defaults()
-        for k in ("lan", "encoder", "tokens"):
+        for k in ("lan", "encoder", "tokens", "profiles", "profile"):
             if k in saved:
                 data[k] = saved[k]
         if isinstance(saved.get("destinations"), list):
             data["destinations"] = [{**new_destination(d.get("platform", "custom")), **d}
                                     for d in saved["destinations"] if isinstance(d, dict) and d.get("id")]
+        if not saved.get("profiles"):   # from before profiles: one with what's switched on
+            data["profiles"] = [{"name": "Main", "platforms": [d["id"] for d in data["destinations"] if d["enabled"]]}]
+            data["profile"] = "Main"
         self.data = data
 
     def save(self):
@@ -144,6 +151,66 @@ class Settings:
     def remove_destination(self, dest_id):
         with self._lock:
             self.data["destinations"] = [d for d in self.data["destinations"] if d["id"] != dest_id]
+            for p in self.data["profiles"]:
+                p["platforms"] = [i for i in p["platforms"] if i != dest_id]
+            self.save()
+
+    # --- Stream profiles -----------------------------------------------------
+
+    def _profile(self, name):
+        p = next((p for p in self.data["profiles"] if p["name"] == name), None)
+        if p is None:
+            raise ValueError(f"No profile called {name}")
+        return p
+
+    def save_all(self, changes, profile=None):
+        """The control panel's Save: every card's edits (enabled included) in
+        one go, and the platforms that are on stored in the chosen profile."""
+        with self._lock:
+            dests = self.data["destinations"]
+            cleaned = {}
+            for change in changes:
+                i = next((i for i, x in enumerate(dests) if x["id"] == change.get("id")), None)
+                if i is None:
+                    raise ValueError(f"Unknown destination: {change.get('id')}")
+                cleaned[i] = clean_destination(change, dests[i])   # all checked before any is applied
+            for i, d in cleaned.items():
+                dests[i] = d
+            if profile is not None:
+                self._profile(profile)
+                self.data["profile"] = profile
+            p = self._profile(self.data["profile"])
+            p["platforms"] = [d["id"] for d in dests if d["enabled"]]
+            self.save()
+
+    def select_profile(self, name):
+        """Switch on exactly the chosen profile's platforms."""
+        with self._lock:
+            p = self._profile(name)
+            for d in self.data["destinations"]:
+                d["enabled"] = d["id"] in p["platforms"]
+            self.data["profile"] = name
+            self.save()
+
+    def add_profile(self, name, platforms):
+        name = (name or "").strip()
+        with self._lock:
+            if not name:
+                raise ValueError("Give the profile a name")
+            if any(p["name"].lower() == name.lower() for p in self.data["profiles"]):
+                raise ValueError(f"There's already a profile called {name}")
+            ids = {d["id"] for d in self.data["destinations"]}
+            self.data["profiles"].append({"name": name, "platforms": [i for i in platforms if i in ids]})
+            self.save()
+
+    def delete_profile(self, name):
+        with self._lock:
+            if len(self.data["profiles"]) <= 1:
+                raise ValueError("Keep at least one profile")
+            self._profile(name)
+            self.data["profiles"] = [p for p in self.data["profiles"] if p["name"] != name]
+            if self.data["profile"] == name:
+                self.data["profile"] = self.data["profiles"][0]["name"]
             self.save()
 
     def token(self, dest_id):

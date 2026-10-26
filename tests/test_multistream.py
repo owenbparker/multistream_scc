@@ -68,6 +68,34 @@ class SettingsTest(unittest.TestCase):
         finally:
             oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID = saved
 
+    def test_profiles(self):
+        s = Settings(self.path)
+        s.save_all([{"id": "youtube", "enabled": True, "key": "yt"}, {"id": "twitch", "enabled": True}])
+        self.assertEqual(s.snapshot()["profiles"], [{"name": "Main", "platforms": ["youtube", "twitch"]}])
+        s.add_profile("Twitch only", ["twitch"])
+        s.select_profile("Twitch only")
+        self.assertEqual([d["id"] for d in s.destinations() if d["enabled"]], ["twitch"])
+        s.save_all([{"id": "tiktok", "enabled": True}])      # saved into the chosen profile
+        again = Settings(self.path)
+        self.assertEqual(again.snapshot()["profile"], "Twitch only")
+        self.assertEqual(again.snapshot()["profiles"][1]["platforms"], ["twitch", "tiktok"])
+        again.select_profile("Main")
+        self.assertEqual([d["id"] for d in again.destinations() if d["enabled"]], ["youtube", "twitch"])
+        with self.assertRaises(ValueError):
+            again.add_profile("main", [])
+        with self.assertRaises(ValueError):     # a bad change saves nothing
+            again.save_all([{"id": "x", "enabled": True}, {"id": "twitch", "server": "http://nope"}])
+        self.assertFalse(next(d for d in again.destinations() if d["id"] == "x")["enabled"])
+        again.delete_profile("Main")
+        self.assertEqual(again.snapshot()["profile"], "Twitch only")
+        with self.assertRaises(ValueError):
+            again.delete_profile("Twitch only")
+
+    def test_old_settings_get_a_profile_of_what_was_on(self):
+        with open(self.path, "w") as f:
+            json.dump({"destinations": [new_destination("twitch", enabled=True), new_destination("youtube")]}, f)
+        self.assertEqual(Settings(self.path).snapshot()["profiles"], [{"name": "Main", "platforms": ["twitch"]}])
+
     def test_broken_file_falls_back_to_defaults(self):
         with open(self.path, "w") as f:
             f.write("{nope")

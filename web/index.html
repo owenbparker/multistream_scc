@@ -46,6 +46,15 @@
   .watching { font-size: 13px; color: var(--muted); }
   .watching b { color: var(--text); font-variant-numeric: tabular-nums; }
   #chat-toggle.on { border-color: var(--gold); }
+  #profiles { display: flex; align-items: center; gap: 10px; padding: 12px 16px; flex-wrap: wrap; }
+  #profiles label { font-size: 13px; color: var(--muted); font-weight: 600; }
+  #profiles select { padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line); background: rgba(0, 0, 0, .5); min-width: 200px; font-weight: 600; }
+  #profiles select:focus { outline: none; border-color: var(--gold); }
+  #profiles .spacer { flex: 1; }
+  #dirty { font-size: 13px; color: var(--gold); }
+  #save { padding: 7px 18px; }
+  #save[disabled] { background: rgba(255, 255, 255, .12); color: var(--muted); cursor: default; }
+  .dest.dirty { border-style: dashed; border-color: rgba(245, 196, 0, .7); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(6px); }
 
   /* What's coming in from OBS. */
@@ -155,6 +164,16 @@
       <label class="check-row"><input type="checkbox" id="lan"> Let other PCs on the network stream in <span id="lan-server"></span></label>
     </div>
   </section>
+  <section class="card" id="profiles">
+    <label for="profile">Profile</label>
+    <select id="profile" title="Switches on the platforms saved in this profile"></select>
+    <button class="ghost" id="profile-new">New profile</button>
+    <button class="ghost" id="profile-delete">Delete</button>
+    <span class="spacer"></span>
+    <span id="dirty"></span>
+    <button class="ghost" id="discard" hidden>Discard</button>
+    <button class="primary" id="save" disabled>Save</button>
+  </section>
   <section id="dests"></section>
 </main>
 <aside id="chat" hidden></aside>
@@ -168,7 +187,20 @@ const $ = id => document.getElementById(id);
 const showUpdate = updateButton($("update"), $("version"));
 const MODES = { copy: "As OBS sends it", crop: "Cropped to vertical (9:16)", vertical: "OBS vertical output" };
 const LOGOS = ["youtube", "twitch", "x", "tiktok", "facebook"];   // web/assets/platforms/<id>.png
-let state = null, editing = null, addOpen = false;
+let state = null, editing = null;
+// Edits not saved yet: destination id -> changed fields (enabled included).
+// One Save button applies them all and stores the platforms in the profile.
+let drafts = {};
+const eff = d => ({ ...d, ...(drafts[d.id] || {}) });
+const dirty = () => Object.keys(drafts).length > 0;
+function setDraft(id, field, value) {
+  const saved = state.destinations.find(x => x.id === id);
+  const draft = drafts[id] = drafts[id] || {};
+  if (saved && String(saved[field]) === String(value)) delete draft[field];
+  else draft[field] = value;
+  if (!Object.keys(draft).length) delete drafts[id];
+  render();
+}
 
 let toastTimer;
 function toast(text) {
@@ -251,7 +283,7 @@ function formHtml(d) {
     ${["twitch", "youtube"].includes(d.platform) ? `<label>Chat channel<input name="chat" value="${esc(d.chat)}" placeholder="${d.platform === "twitch" ? "your Twitch channel name" : "@handle or channel ID (UC…)"}" spellcheck="false"></label>
     <div class="help">Shows this channel's chat and viewers in Chat. Logging in fills it in.</div>` : ""}
     <label class="bitrate">Bitrate (kbps)<input name="bitrate" type="number" min="500" max="20000" step="500" value="${d.bitrate}"></label>
-    <div class="buttons"><button class="primary" type="submit">Save</button><button class="ghost cancel" type="button">Cancel</button>
+    <div class="buttons"><button class="ghost cancel" type="button">Done</button>
       ${d.platform === "custom" ? `<button class="danger remove" type="button">Remove</button>` : ""}</div>
   </form>`;
 }
@@ -267,14 +299,14 @@ function openForm(card, d) {
   f.querySelector(".show").onclick = e => { const k = el("key"); k.type = k.type === "password" ? "text" : "password"; e.target.textContent = k.type === "password" ? "Show" : "Hide"; };
   f.querySelector(".cancel").onclick = () => closeForm(card);
   const rm = f.querySelector(".remove");
-  if (rm) rm.onclick = async () => { if (confirm(`Remove ${d.name}?`)) { closeForm(card); await post("/api/destination/remove", { id: d.id }); } };
-  f.onsubmit = async e => {
-    e.preventDefault();
-    const body = { id: d.id, server: el("server").value, key: el("key").value, video: el("video").value, bitrate: el("bitrate").value };
-    if (el("name")) body.name = el("name").value;
-    if (el("chat")) body.chat = el("chat").value;
-    if (await post("/api/destination", body)) { closeForm(card); toast(`${d.name} saved`); }
+  if (rm) rm.onclick = async () => {
+    if (confirm(`Remove ${d.name}?`)) { closeForm(card); delete drafts[d.id]; await post("/api/destination/remove", { id: d.id }); }
   };
+  for (const field of ["name", "server", "key", "video", "bitrate", "chat"]) {
+    const input = el(field);
+    if (input) input.addEventListener("input", () => setDraft(d.id, field, field === "bitrate" ? Number(input.value) : input.value));
+  }
+  f.onsubmit = e => { e.preventDefault(); closeForm(card); };
   el("server").focus();
 }
 
@@ -295,7 +327,10 @@ function renderLogin(card, d, l) {
   if (!l) return;
   const name = PLATFORM_NAMES[l.platform] || d.name;
   if (l.status === "done") {
-    if (seenLogins[d.id] !== "done") toast(`${d.name}: ${l.message}`);
+    if (seenLogins[d.id] !== "done") {
+      toast(`${d.name}: ${l.message}`);
+      if (drafts[d.id]) { for (const f of ["server", "key", "chat"]) delete drafts[d.id][f]; if (!Object.keys(drafts[d.id]).length) delete drafts[d.id]; }
+    }
     seenLogins[d.id] = "done";
     box.hidden = true;
     return;
@@ -313,7 +348,8 @@ function renderDests() {
   const box = $("dests"), outs = Object.fromEntries(state.relay.outputs.map(o => [o.id, o]));
   const ids = state.destinations.map(d => d.id);
   [...box.querySelectorAll(".dest")].forEach(c => { if (!ids.includes(c.dataset.id)) c.remove(); });
-  for (const d of state.destinations) {
+  for (const saved of state.destinations) {
+    const d = eff(saved);
     let card = box.querySelector(`.dest[data-id="${CSS.escape(d.id)}"]`);
     if (!card) {
       card = document.createElement("div");
@@ -321,18 +357,19 @@ function renderDests() {
       card.dataset.id = d.id;
       card.innerHTML = cardHtml(d);
       card.querySelector(".switch").onclick = () => {
-        const cur = state.destinations.find(x => x.id === d.id);
-        post("/api/destination", { id: d.id, enabled: !cur.enabled });
+        const cur = eff(state.destinations.find(x => x.id === d.id));
+        setDraft(d.id, "enabled", !cur.enabled);
       };
       card.querySelector(".login-btn").onclick = () => post("/api/login", { id: d.id });
       card.querySelector(".edit").onclick = () => {
         if (editing) closeForm(box.querySelector(`.dest[data-id="${CSS.escape(editing)}"]`));
-        openForm(card, state.destinations.find(x => x.id === d.id));
+        openForm(card, eff(state.destinations.find(x => x.id === d.id)));
       };
       box.insertBefore(card, box.querySelector(".add"));
     }
-    const o = outs[d.id], s = statusLine(d, o);
+    const o = outs[d.id], s = drafts[d.id] ? { cls: "starting", text: "Not saved yet: press Save" } : statusLine(d, o);
     card.classList.toggle("on", d.enabled);
+    card.classList.toggle("dirty", !!drafts[d.id]);
     card.classList.toggle("is-live", o?.status === "live");
     card.querySelector(".name").textContent = d.name;
     card.querySelector(".mode").textContent = modeText(d) + (d.account ? ` · ${d.account}` : "");
@@ -373,10 +410,70 @@ function render() {
   const counts = Object.values(state.viewers).map(v => v.viewers).filter(v => v != null);
   $("watching-box").hidden = !counts.length;
   $("watching").textContent = counts.reduce((a, b) => a + b, 0).toLocaleString();
-  const outs = state.relay.outputs, on = state.destinations.filter(d => d.enabled).length;
+  renderProfiles();
+  const outs = state.relay.outputs, on = state.destinations.map(eff).filter(d => d.enabled).length;
   const live = outs.filter(o => o.status === "live").length;
   $("summary").textContent = `${on} of ${state.destinations.length} platforms switched on` + (live ? ` · ${live} live` : "");
 }
+
+function renderProfiles() {
+  const sel = $("profile");
+  const names = state.profiles.map(p => p.name);
+  if (sel.dataset.names !== names.join("\n")) {
+    sel.innerHTML = state.profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+    sel.dataset.names = names.join("\n");
+  }
+  if (document.activeElement !== sel) sel.value = state.profile;
+  const p = state.profiles.find(x => x.name === state.profile);
+  sel.title = p ? `${p.name}: ${p.platforms.map(id => state.destinations.find(d => d.id === id)?.name || id).join(", ") || "no platforms"}` : "";
+  $("profile-delete").hidden = state.profiles.length < 2;
+  const n = Object.keys(drafts).length;
+  $("dirty").textContent = n ? `Unsaved changes on ${n} platform${n > 1 ? "s" : ""}` : "";
+  $("save").disabled = !n;
+  $("discard").hidden = !n;
+}
+
+function closeAllForms() {
+  document.querySelectorAll(".dest form").forEach(f => closeForm(f.closest(".dest")));
+}
+
+$("save").onclick = async () => {
+  const changes = Object.entries(drafts).map(([id, f]) => ({ id, ...f }));
+  if (await post("/api/save", { changes, profile: $("profile").value })) {
+    drafts = {};
+    render();
+    toast(`Saved to profile "${state.profile}"`);
+  }
+};
+$("discard").onclick = () => {
+  if (!confirm("Discard the unsaved changes?")) return;
+  drafts = {};
+  closeAllForms();
+  render();
+};
+$("profile").onchange = async e => {
+  const name = e.target.value;
+  if (dirty() && !confirm(`Switch to "${name}" and discard the unsaved changes?`)) { e.target.value = state.profile; return; }
+  drafts = {};
+  closeAllForms();
+  if (await post("/api/profile/select", { name })) toast(`Profile "${name}": its platforms are switched on`);
+};
+$("profile-new").onclick = async () => {
+  const name = prompt("Name for the new profile (it starts with the platforms switched on now, plus any unsaved changes):");
+  if (!name) return;
+  const platforms = state.destinations.map(eff).filter(d => d.enabled).map(d => d.id);
+  const changes = Object.entries(drafts).map(([id, f]) => ({ id, ...f }));
+  if (await post("/api/profile/add", { name, platforms, changes })) {
+    drafts = {};
+    render();
+    toast(`Profile "${name.trim()}" saved`);
+  }
+};
+$("profile-delete").onclick = async () => {
+  const name = state.profile;
+  if (confirm(`Delete the profile "${name}"? (The platforms' servers and keys stay.)`)) await post("/api/profile/delete", { name });
+};
+window.addEventListener("beforeunload", e => { if (dirty()) e.preventDefault(); });
 
 async function refresh() {
   try {

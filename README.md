@@ -38,6 +38,26 @@ drop while it restarts).
    you stop, they all stop. Switch a platform on or off mid-stream and only
    that one starts or stops.
 
+### Profiles and Save
+
+Switching a platform on or off, or changing its server or key, isn't
+applied until you press **Save** (one Save for the whole panel; unsaved
+cards get a dashed border, and **Discard** undoes them). Save also stores
+which platforms are on in the chosen **Profile**. Picking a profile from the
+dropdown switches on exactly its platforms; **New profile** saves the
+current choice under a new name (e.g. "Twitch + YouTube", "Everything").
+
+### Chat and viewers
+
+**Chat** (top right) shows Twitch and YouTube chat in one list, with how
+many are watching on each (also on each card and in total at the top). It
+follows each platform that's switched on and has its **Chat channel** set
+(logging in fills it in). **Open in its own window** pops it out, and
+`http://127.0.0.1:8775/chat.html` works as an OBS custom browser dock.
+Twitch viewer counts need "Log in with Twitch" (done once). YouTube's chat
+and viewers are read the way youtube.com's own chat window reads them. X,
+TikTok and Facebook don't let apps read their live chat.
+
 A platform that drops (or refuses the key) is retried 2, 4, 8, 15, then
 every 30 seconds while the others keep going; its card shows why. **Show
 log** at the bottom has the details.

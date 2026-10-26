@@ -32,7 +32,9 @@ class StreamApp:
         self._running = False
 
     def state(self):
-        return {"destinations": self.settings.destinations(), "relay": self.relay.state(),
+        snap = self.settings.snapshot()
+        return {"destinations": snap["destinations"], "relay": self.relay.state(),
+                "profiles": snap["profiles"], "profile": snap["profile"],
                 "platforms": {k: {"name": p["name"], "server": p["server"], "help": p["help"]}
                               for k, p in PLATFORMS.items()},
                 "logins": self.logins.info(), "can_log_in": accounts.available(),
@@ -95,6 +97,16 @@ def make_handler(app):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
                 if path == "/api/destination":
                     app.settings.update_destination(body)
+                elif path == "/api/save":
+                    app.settings.save_all(body.get("changes") or [], body.get("profile"))
+                elif path == "/api/profile/select":
+                    app.settings.select_profile(body.get("name"))
+                elif path == "/api/profile/add":
+                    app.settings.add_profile(body.get("name"), body.get("platforms") or [])
+                    if body.get("changes") is not None:
+                        app.settings.save_all(body["changes"], body.get("name"))
+                elif path == "/api/profile/delete":
+                    app.settings.delete_profile(body.get("name"))
                 elif path == "/api/destination/remove":
                     app.settings.remove_destination(body.get("id"))
                 elif path == "/api/login":
