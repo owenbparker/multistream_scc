@@ -42,7 +42,8 @@ def new_destination(platform, **fields):
     d = {"id": platform if platform != "custom" else "rtmp-" + uuid.uuid4().hex[:6],
          "platform": platform if platform in PLATFORMS else "custom",
          "name": p["name"], "enabled": False, "server": p["server"], "key": "",
-         "video": p.get("video", COPY), "bitrate": 6000}
+         "video": p.get("video", COPY), "bitrate": 6000,
+         "account": ""}       # who's logged in, when the key came from logging in
     d.update(fields)
     return d
 
@@ -56,9 +57,11 @@ def defaults():
 def clean_destination(d, old=None):
     """A destination as sent by the control panel -> a saved one. Raises ValueError."""
     out = dict(old or new_destination(str(d.get("platform") or "custom")))
-    for field in ("name", "server", "key"):
+    for field in ("name", "server", "key", "account"):
         if field in d:
             out[field] = str(d[field] or "").strip()
+    if "key" in d and "account" not in d and old and out["key"] != old.get("key"):
+        out["account"] = ""    # a pasted key: no longer the logged-in account's
     if "enabled" in d:
         out["enabled"] = bool(d["enabled"])
     if "video" in d:

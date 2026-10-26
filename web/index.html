@@ -77,6 +77,10 @@
   .status .rate { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
   .status.error, .status.retrying { color: #ffcfc8; }
   .dest .actions { display: flex; gap: 8px; }
+  .login { display: grid; gap: 8px; padding: 12px; border-radius: 10px; background: rgba(0, 0, 0, .4); border: 1px solid var(--line); font-size: 13px; }
+  .login .code { font: 700 26px/1.2 Consolas, monospace; letter-spacing: .12em; color: var(--gold); user-select: all; }
+  .login .buttons { display: flex; gap: 8px; }
+  .bad { color: #ffb4a8; }
 
   .switch { margin-left: auto; position: relative; width: 46px; height: 26px; border-radius: 13px; border: 0; padding: 0;
             background: rgba(255, 255, 255, .18); transition: background .15s; flex: none; }
@@ -213,12 +217,15 @@ function modeText(d) {
   return MODES[d.video];
 }
 
+const PLATFORM_NAMES = { twitch: "Twitch", youtube: "YouTube" };
+
 function cardHtml(d) {
   return `<div class="top"><div class="badge ${d.platform}">${LOGOS.includes(d.platform) ? `<img src="assets/platforms/${d.platform}.png" alt="">` : "R"}</div>
       <div><div class="name"></div><div class="mode"></div></div>
       <button class="switch" title="Send to this platform when OBS is streaming"></button></div>
     <div class="status"><span class="dot"></span><span class="text"></span><span class="rate"></span></div>
-    <div class="actions"><button class="ghost edit">Server and key</button></div>`;
+    <div class="login" hidden></div>
+    <div class="actions"><button class="ghost edit">Server and key</button><button class="primary login-btn" hidden>Log in with ${esc(PLATFORM_NAMES[d.platform] || "")}</button></div>`;
 }
 
 function formHtml(d) {
@@ -263,6 +270,31 @@ function closeForm(card) {
   card.querySelector(".actions").hidden = false;
 }
 
+// A login in progress (or just finished) on a card.
+const seenLogins = {};
+function renderLogin(card, d, l) {
+  const box = card.querySelector(".login");
+  const key = l ? `${l.status}|${l.code}|${l.message}` : "";
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.hidden = !l || (l.status === "done" && seenLogins[d.id] === "done");
+  if (!l) return;
+  const name = PLATFORM_NAMES[l.platform] || d.name;
+  if (l.status === "done") {
+    if (seenLogins[d.id] !== "done") toast(`${d.name}: ${l.message}`);
+    seenLogins[d.id] = "done";
+    box.hidden = true;
+    return;
+  }
+  seenLogins[d.id] = l.status;
+  const buttons = `<button class="ghost open" type="button">Open ${esc(name)}'s page</button><button class="ghost cancel" type="button">${l.status === "error" ? "Close" : "Cancel"}</button>`;
+  box.innerHTML = l.status === "error" ? `<div class="bad">Login failed: ${esc(l.message)}</div><div class="buttons"><button class="ghost cancel" type="button">Close</button></div>`
+    : l.code ? `<div>On ${esc(name)}'s page (opened in your browser), enter</div><div class="code">${esc(l.code)}</div><div class="buttons">${buttons}</div>`
+    : `<div>${esc(l.message || "Starting…")}</div><div class="buttons">${l.url ? buttons : ""}</div>`;
+  box.querySelector(".open")?.addEventListener("click", () => post("/api/login/open", { id: d.id }));
+  box.querySelector(".cancel").onclick = () => post("/api/login/cancel", { id: d.id });
+}
+
 function renderDests() {
   const box = $("dests"), outs = Object.fromEntries(state.relay.outputs.map(o => [o.id, o]));
   const ids = state.destinations.map(d => d.id);
@@ -278,6 +310,7 @@ function renderDests() {
         const cur = state.destinations.find(x => x.id === d.id);
         post("/api/destination", { id: d.id, enabled: !cur.enabled });
       };
+      card.querySelector(".login-btn").onclick = () => post("/api/login", { id: d.id });
       card.querySelector(".edit").onclick = () => {
         if (editing) closeForm(box.querySelector(`.dest[data-id="${CSS.escape(editing)}"]`));
         openForm(card, state.destinations.find(x => x.id === d.id));
@@ -288,7 +321,11 @@ function renderDests() {
     card.classList.toggle("on", d.enabled);
     card.classList.toggle("is-live", o?.status === "live");
     card.querySelector(".name").textContent = d.name;
-    card.querySelector(".mode").textContent = modeText(d);
+    card.querySelector(".mode").textContent = modeText(d) + (d.account ? ` · ${d.account}` : "");
+    const canLogin = !!state.can_log_in[d.platform];
+    const busy = ["starting", "waiting"].includes(state.logins[d.id]?.status);
+    card.querySelector(".login-btn").hidden = !canLogin || busy;
+    renderLogin(card, d, state.logins[d.id]);
     card.querySelector(".switch").classList.toggle("on", d.enabled);
     const st = card.querySelector(".status");
     st.className = "status " + s.cls;

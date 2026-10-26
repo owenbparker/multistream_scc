@@ -7,6 +7,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
+from . import accounts
 from .config import WEB_DIR
 from .log import log, since
 from .relay import Relay
@@ -22,12 +23,14 @@ class StreamApp:
         self.settings = settings or Settings()
         self.relay = relay or Relay(self.settings)
         self.updater = Updater()
+        self.logins = accounts.Logins(self.settings)
         self.httpd = None
 
     def state(self):
         return {"destinations": self.settings.destinations(), "relay": self.relay.state(),
                 "platforms": {k: {"name": p["name"], "server": p["server"], "help": p["help"]}
                               for k, p in PLATFORMS.items()},
+                "logins": self.logins.info(), "can_log_in": accounts.available(),
                 "update": self.updater.info()}
 
 
@@ -85,6 +88,12 @@ def make_handler(app):
                     app.settings.update_destination(body)
                 elif path == "/api/destination/remove":
                     app.settings.remove_destination(body.get("id"))
+                elif path == "/api/login":
+                    app.logins.start(body.get("id"))
+                elif path == "/api/login/open":
+                    app.logins.open_page(body.get("id"))
+                elif path == "/api/login/cancel":
+                    app.logins.cancel(body.get("id"))
                 elif path == "/api/lan":
                     app.settings.set(lan=bool(body.get("lan")))
                     app.relay.restart(lan=bool(body.get("lan")))
