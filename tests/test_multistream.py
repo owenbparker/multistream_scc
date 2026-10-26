@@ -48,6 +48,26 @@ class SettingsTest(unittest.TestCase):
             clean_destination({"platform": "custom", "video": "sideways"})
         self.assertEqual(clean_destination({"platform": "custom", "bitrate": 99999})["bitrate"], 20000)
 
+    def test_pasting_a_key_forgets_the_logged_in_account(self):
+        s = Settings(self.path)
+        s.update_destination({"id": "twitch", "key": "a", "account": "SCCSaints"})
+        self.assertEqual(s.destinations()[1]["account"], "SCCSaints")
+        s.update_destination({"id": "twitch", "key": "a", "enabled": True})   # same key: kept
+        self.assertEqual(s.destinations()[1]["account"], "SCCSaints")
+        s.update_destination({"id": "twitch", "key": "b"})
+        self.assertEqual(s.destinations()[1]["account"], "")
+
+    def test_login_needs_the_app_ids(self):
+        from multistream import accounts, oauth_ids
+        saved = (oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID)
+        try:
+            oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID = "", ""
+            self.assertEqual(accounts.available(), {"twitch": False, "youtube": False})
+            with self.assertRaises(ValueError):
+                accounts.Logins(Settings(self.path)).start("twitch")
+        finally:
+            oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID = saved
+
     def test_broken_file_falls_back_to_defaults(self):
         with open(self.path, "w") as f:
             f.write("{nope")
