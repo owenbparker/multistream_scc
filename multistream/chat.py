@@ -32,6 +32,7 @@ import urllib.request
 
 from . import oauth_ids
 from .log import log
+from .tokens import NeedsLogin, Tokens
 
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
@@ -42,8 +43,9 @@ VIEWERS_EVERY = 30
 class Hub:
     """The messages and viewer counts, and a follower per platform."""
 
-    def __init__(self, settings):
+    def __init__(self, settings, tokens=None):
         self.settings = settings
+        self.tokens = tokens or Tokens(settings)
         self.messages = collections.deque(maxlen=400)
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
@@ -158,7 +160,6 @@ class TwitchChat(Follower):
     def __init__(self, hub, dest):
         super().__init__(hub, dest)
         self.channel = self.channel.lower().lstrip("#").rsplit("/", 1)[-1]
-        self._token = None
 
     def start(self):
         super().start()
@@ -204,38 +205,21 @@ class TwitchChat(Follower):
     # Viewers come from Twitch's API, which needs the login.
     def _api(self, url):
         for attempt in (1, 2):
-            if not self._token:
-                self._token = self._refresh()
-            if not self._token:
+            try:
+                token = self.hub.tokens.access(self.dest["id"], "twitch")
+            except NeedsLogin as e:
+                self.message = f"{e} to see viewers"
                 return None
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._token}",
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}",
                                                        "Client-Id": oauth_ids.TWITCH_CLIENT_ID})
             try:
                 with urllib.request.urlopen(req, timeout=10) as r:
                     return json.loads(r.read())
             except urllib.error.HTTPError as e:
                 if e.code == 401 and attempt == 1:
-                    self._token = None
+                    self.hub.tokens.forget(self.dest["id"])
                     continue
                 raise
-
-    def _refresh(self):
-        refresh = self.hub.settings.token(self.dest["id"])
-        if not refresh or not oauth_ids.TWITCH_CLIENT_ID:
-            self.message = "Log in with Twitch to see viewers"
-            return None
-        body = urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": refresh,
-                                       "client_id": oauth_ids.TWITCH_CLIENT_ID}).encode()
-        try:
-            with urllib.request.urlopen("https://id.twitch.tv/oauth2/token", body, timeout=10) as r:
-                got = json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            if e.code in (400, 401):
-                self.hub.settings.set_token(self.dest["id"], "")
-                self.message = "Log in with Twitch again to see viewers"
-            return None
-        self.hub.settings.set_token(self.dest["id"], got.get("refresh_token") or refresh)
-        return got.get("access_token")
 
     def _watch_viewers(self):
         while not self._stop.is_set():

@@ -55,6 +55,37 @@
   #save { padding: 7px 18px; }
   #save[disabled] { background: rgba(255, 255, 255, .12); color: var(--muted); cursor: default; }
   .dest.dirty { border-style: dashed; border-color: rgba(245, 196, 0, .7); }
+  #info { padding: 14px 18px; display: grid; gap: 12px; }
+  #info.dirty { border-style: dashed; border-color: rgba(245, 196, 0, .7); }
+  #info .head { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+  #info .head h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+  #info .head .sub { font-size: 12px; color: var(--muted); margin-left: auto; }
+  #info .body { display: grid; gap: 14px; }
+  #info label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  #info input[type=text], #info textarea, #info select { padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line); background: rgba(0, 0, 0, .5); font: inherit; color: var(--text); }
+  #info textarea { resize: vertical; min-height: 64px; }
+  #info input:focus, #info textarea:focus, #info select:focus { outline: none; border-color: var(--gold); }
+  #info .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  #info .col { display: grid; gap: 10px; align-content: start; padding: 12px; border-radius: 10px; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); }
+  #info .col h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  #info .col h3 img { width: 20px; height: 20px; object-fit: contain; }
+  #info .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  #info .checks { display: flex; gap: 16px; flex-wrap: wrap; }
+  #info .checks label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+  #info .note { font-size: 12px; color: var(--muted); }
+  #info .push { font-size: 12px; min-height: 16px; }
+  #info .push.ok { color: var(--live); } #info .push.error { color: #ffb4a8; } #info .push.working { color: var(--warn); }
+  .cat { position: relative; display: grid; gap: 6px; }
+  .cat .chosen { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+  .cat .chosen button { padding: 2px 8px; font-size: 12px; }
+  .cat .found { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin-top: 4px; background: #101a13; border: 1px solid var(--line);
+                border-radius: 8px; max-height: 260px; overflow: auto; }
+  .cat .found button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 10px; border: 0; background: none; text-align: left; font-size: 13px; }
+  .cat .found button:hover { background: rgba(255, 255, 255, .08); }
+  .cat .found img { width: 26px; height: 36px; object-fit: cover; border-radius: 3px; }
+  .thumb { display: flex; align-items: center; gap: 10px; }
+  .thumb img { width: 128px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #000; }
+  @media (max-width: 1100px) { #info .cols { grid-template-columns: 1fr; } }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(6px); }
 
   /* What's coming in from OBS. */
@@ -175,6 +206,50 @@
     <button class="primary" id="save" disabled>Save</button>
   </section>
   <section id="dests"></section>
+  <section class="card" id="info">
+    <div class="head" id="info-head"><h2>Stream info</h2><span class="sub" id="info-sub"></span><span id="info-arrow">▾</span></div>
+    <div class="body" id="info-body">
+      <label>Title (Twitch and YouTube)<input type="text" id="i-title" maxlength="140" placeholder="e.g. St. Clair Saints vs Lambton | VALORANT"></label>
+      <div class="cols">
+        <div class="col">
+          <h3><img src="assets/platforms/twitch.png" alt="">Twitch</h3>
+          <label>Category<span class="cat">
+            <span class="chosen" id="i-tw-chosen"></span>
+            <input type="text" id="i-tw-cat" placeholder="Search Twitch categories…" autocomplete="off">
+            <span class="found" id="i-tw-found" hidden></span></span></label>
+          <label>Tags (comma-separated, up to 10)<input type="text" id="i-tw-tags" placeholder="esports, collegeesports, valorant"></label>
+          <div class="row2">
+            <label>Language<select id="i-tw-lang">
+              <option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option>
+              <option value="de">German</option><option value="pt">Portuguese</option><option value="it">Italian</option>
+              <option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option>
+              <option value="other">Other</option></select></label>
+            <div class="checks" style="align-self:end"><label><input type="checkbox" id="i-tw-branded"> Branded content</label></div>
+          </div>
+          <div class="note">Followers get Twitch's go-live notification by themselves. Its text and the stream thumbnail can't be set by apps: edit the text once in Twitch's Creator Dashboard &gt; Settings &gt; Stream.</div>
+          <div class="push" id="i-tw-push"></div>
+        </div>
+        <div class="col">
+          <h3><img src="assets/platforms/youtube.png" alt="">YouTube</h3>
+          <label>Description<textarea id="i-yt-desc" maxlength="5000"></textarea></label>
+          <div class="row2">
+            <label>Category<select id="i-yt-cat">
+              <option value="20">Gaming</option><option value="17">Sports</option><option value="24">Entertainment</option>
+              <option value="22">People &amp; Blogs</option><option value="27">Education</option><option value="10">Music</option>
+              <option value="23">Comedy</option><option value="28">Science &amp; Technology</option><option value="25">News &amp; Politics</option>
+              <option value="26">Howto &amp; Style</option><option value="1">Film &amp; Animation</option><option value="29">Nonprofits &amp; Activism</option></select></label>
+            <label>Visibility<select id="i-yt-privacy"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
+            <label>Latency<select id="i-yt-latency"><option value="normal">Normal</option><option value="low">Low</option><option value="ultraLow">Ultra low</option></select></label>
+          </div>
+          <div class="checks"><label><input type="checkbox" id="i-yt-dvr"> DVR (viewers can rewind)</label><label><input type="checkbox" id="i-yt-kids"> Made for kids</label></div>
+          <label>Thumbnail (JPG or PNG, up to 2 MB, 1280x720)<span class="thumb"><img id="i-yt-thumb-img" alt="" hidden><input type="file" id="i-yt-thumb" accept="image/jpeg,image/png"><button class="ghost" type="button" id="i-yt-thumb-clear" hidden>Remove</button></span></label>
+          <div class="note">Subscribers are notified by YouTube when a public stream starts. The app makes the broadcast and ties it to your stream key, so it goes live when OBS starts.</div>
+          <div class="push" id="i-yt-push"></div>
+        </div>
+      </div>
+      <div class="note">Saved with the profile and sent to Twitch and YouTube when you press Save or pick the profile (both need "Log in" on their card).</div>
+    </div>
+  </section>
 </main>
 <aside id="chat" hidden></aside>
 </div>
@@ -192,7 +267,8 @@ let state = null, editing = null;
 // One Save button applies them all and stores the platforms in the profile.
 let drafts = {};
 const eff = d => ({ ...d, ...(drafts[d.id] || {}) });
-const dirty = () => Object.keys(drafts).length > 0;
+let infoDraft = null;   // Stream info edits not saved yet (the whole info), or null
+const dirty = () => Object.keys(drafts).length > 0 || !!infoDraft;
 function setDraft(id, field, value) {
   const saved = state.destinations.find(x => x.id === id);
   const draft = drafts[id] = drafts[id] || {};
@@ -411,6 +487,7 @@ function render() {
   $("watching-box").hidden = !counts.length;
   $("watching").textContent = counts.reduce((a, b) => a + b, 0).toLocaleString();
   renderProfiles();
+  renderInfo();
   const outs = state.relay.outputs, on = state.destinations.map(eff).filter(d => d.enabled).length;
   const live = outs.filter(o => o.status === "live").length;
   $("summary").textContent = `${on} of ${state.destinations.length} platforms switched on` + (live ? ` · ${live} live` : "");
@@ -428,9 +505,10 @@ function renderProfiles() {
   sel.title = p ? `${p.name}: ${p.platforms.map(id => state.destinations.find(d => d.id === id)?.name || id).join(", ") || "no platforms"}` : "";
   $("profile-delete").hidden = state.profiles.length < 2;
   const n = Object.keys(drafts).length;
-  $("dirty").textContent = n ? `Unsaved changes on ${n} platform${n > 1 ? "s" : ""}` : "";
-  $("save").disabled = !n;
-  $("discard").hidden = !n;
+  const parts = [n ? `${n} platform${n > 1 ? "s" : ""}` : "", infoDraft ? "stream info" : ""].filter(Boolean);
+  $("dirty").textContent = parts.length ? `Unsaved changes: ${parts.join(" and ")}` : "";
+  $("save").disabled = !dirty();
+  $("discard").hidden = !dirty();
 }
 
 function closeAllForms() {
@@ -439,8 +517,11 @@ function closeAllForms() {
 
 $("save").onclick = async () => {
   const changes = Object.entries(drafts).map(([id, f]) => ({ id, ...f }));
-  if (await post("/api/save", { changes, profile: $("profile").value })) {
+  const body = { changes, profile: $("profile").value };
+  if (infoDraft) body.info = infoDraft;
+  if (await post("/api/save", body)) {
     drafts = {};
+    infoDraft = null;
     render();
     toast(`Saved to profile "${state.profile}"`);
   }
@@ -448,6 +529,7 @@ $("save").onclick = async () => {
 $("discard").onclick = () => {
   if (!confirm("Discard the unsaved changes?")) return;
   drafts = {};
+  infoDraft = null;
   closeAllForms();
   render();
 };
@@ -455,6 +537,7 @@ $("profile").onchange = async e => {
   const name = e.target.value;
   if (dirty() && !confirm(`Switch to "${name}" and discard the unsaved changes?`)) { e.target.value = state.profile; return; }
   drafts = {};
+  infoDraft = null;
   closeAllForms();
   if (await post("/api/profile/select", { name })) toast(`Profile "${name}": its platforms are switched on`);
 };
@@ -463,8 +546,9 @@ $("profile-new").onclick = async () => {
   if (!name) return;
   const platforms = state.destinations.map(eff).filter(d => d.enabled).map(d => d.id);
   const changes = Object.entries(drafts).map(([id, f]) => ({ id, ...f }));
-  if (await post("/api/profile/add", { name, platforms, changes })) {
+  if (await post("/api/profile/add", { name, platforms, changes, info: infoDraft || state.stream_info })) {
     drafts = {};
+    infoDraft = null;
     render();
     toast(`Profile "${name.trim()}" saved`);
   }
@@ -474,6 +558,110 @@ $("profile-delete").onclick = async () => {
   if (confirm(`Delete the profile "${name}"? (The platforms' servers and keys stay.)`)) await post("/api/profile/delete", { name });
 };
 window.addEventListener("beforeunload", e => { if (dirty()) e.preventDefault(); });
+
+// --- Stream info ------------------------------------------------------------
+const infoNow = () => infoDraft || state.stream_info;
+let infoShown = "";
+function fillInfo(info) {
+  $("i-title").value = info.title;
+  $("i-tw-tags").value = info.twitch.tags;
+  $("i-tw-lang").value = info.twitch.language || "en";
+  $("i-tw-branded").checked = !!info.twitch.branded;
+  $("i-yt-desc").value = info.youtube.description;
+  $("i-yt-cat").value = String(info.youtube.category || "20");
+  $("i-yt-privacy").value = info.youtube.privacy || "public";
+  $("i-yt-latency").value = info.youtube.latency || "normal";
+  $("i-yt-dvr").checked = info.youtube.dvr !== false;
+  $("i-yt-kids").checked = !!info.youtube.kids;
+  $("i-yt-thumb").value = "";
+  showCategory(info);
+  showThumb(info);
+}
+function showCategory(info) {
+  const c = info.twitch;
+  $("i-tw-chosen").innerHTML = c.category_id ? `${esc(c.category)} <button class="ghost" type="button" id="i-tw-clear">Change</button>` : "";
+  $("i-tw-cat").hidden = !!c.category_id;
+  $("i-tw-clear")?.addEventListener("click", () => { editInfo(i => { i.twitch.category_id = ""; i.twitch.category = ""; }); showCategory(infoNow()); $("i-tw-cat").focus(); });
+}
+function showThumb(info) {
+  const t = info.youtube.thumbnail;
+  $("i-yt-thumb-img").hidden = !t;
+  if (t) $("i-yt-thumb-img").src = "thumbs/" + encodeURIComponent(t);
+  $("i-yt-thumb-clear").hidden = !t;
+}
+function editInfo(change) {
+  const next = JSON.parse(JSON.stringify(infoNow()));
+  change(next);
+  infoDraft = JSON.stringify(next) === JSON.stringify(state.stream_info) ? null : next;
+  render();
+}
+function renderInfo() {
+  const key = state.profile + "|" + JSON.stringify(state.stream_info);
+  if (!infoDraft && key !== infoShown) { fillInfo(state.stream_info); infoShown = key; }
+  $("info").classList.toggle("dirty", !!infoDraft);
+  $("info-sub").textContent = `Profile "${state.profile}"` + (infoNow().title ? ` · ${infoNow().title}` : "");
+  for (const [p, el] of [["twitch", "i-tw-push"], ["youtube", "i-yt-push"]]) {
+    const r = state.info_push[p];
+    const name = p === "twitch" ? "Twitch" : "YouTube";
+    const ready = state.info_ready[p];
+    $(el).className = "push " + (r ? r.status : "");
+    $(el).textContent = r ? r.message : ready ? "" : `Log in with ${name} on its card to use this (log in again if you did before this version).`;
+  }
+}
+const bindInfo = (id, set, ev = "input") => $(id).addEventListener(ev, e => editInfo(i => set(i, e.target)));
+bindInfo("i-title", (i, el) => i.title = el.value);
+bindInfo("i-tw-tags", (i, el) => i.twitch.tags = el.value);
+bindInfo("i-tw-lang", (i, el) => i.twitch.language = el.value, "change");
+bindInfo("i-tw-branded", (i, el) => i.twitch.branded = el.checked, "change");
+bindInfo("i-yt-desc", (i, el) => i.youtube.description = el.value);
+bindInfo("i-yt-cat", (i, el) => i.youtube.category = el.value, "change");
+bindInfo("i-yt-privacy", (i, el) => i.youtube.privacy = el.value, "change");
+bindInfo("i-yt-latency", (i, el) => i.youtube.latency = el.value, "change");
+bindInfo("i-yt-dvr", (i, el) => i.youtube.dvr = el.checked, "change");
+bindInfo("i-yt-kids", (i, el) => i.youtube.kids = el.checked, "change");
+$("i-yt-thumb").onchange = e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) { alert("YouTube thumbnails can be at most 2 MB"); e.target.value = ""; return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const r = await fetch("/api/thumbnail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: reader.result }) });
+    const data = await r.json();
+    if (data.error) { alert(data.error); return; }
+    editInfo(i => i.youtube.thumbnail = data.name);
+    showThumb(infoNow());
+  };
+  reader.readAsDataURL(file);
+};
+$("i-yt-thumb-clear").onclick = () => { editInfo(i => i.youtube.thumbnail = ""); $("i-yt-thumb").value = ""; showThumb(infoNow()); };
+let catTimer;
+$("i-tw-cat").addEventListener("input", e => {
+  clearTimeout(catTimer);
+  const q = e.target.value.trim();
+  if (!q) { $("i-tw-found").hidden = true; return; }
+  catTimer = setTimeout(async () => {
+    const data = await (await fetch("/api/twitch/categories?q=" + encodeURIComponent(q))).json();
+    const box = $("i-tw-found");
+    box.innerHTML = data.error ? `<div class="note" style="padding:8px 10px">${esc(data.error)}</div>`
+      : data.categories.map(c => `<button type="button" data-id="${esc(c.id)}" data-name="${esc(c.name)}"><img src="${esc(c.art)}" alt="">${esc(c.name)}</button>`).join("")
+        || `<div class="note" style="padding:8px 10px">No categories found</div>`;
+    box.hidden = false;
+    box.querySelectorAll("button").forEach(b => b.onclick = () => {
+      editInfo(i => { i.twitch.category_id = b.dataset.id; i.twitch.category = b.dataset.name; });
+      box.hidden = true;
+      $("i-tw-cat").value = "";
+      showCategory(infoNow());
+    });
+  }, 300);
+});
+document.addEventListener("click", e => { if (!e.target.closest(".cat")) $("i-tw-found").hidden = true; });
+function showInfo(open) {
+  $("info-body").hidden = !open;
+  $("info-arrow").textContent = open ? "▾" : "▸";
+  try { localStorage.setItem("info", open ? "1" : "0"); } catch (e) {}
+}
+$("info-head").onclick = () => showInfo($("info-body").hidden);
+try { showInfo(localStorage.getItem("info") !== "0"); } catch (e) {}
 
 async function refresh() {
   try {

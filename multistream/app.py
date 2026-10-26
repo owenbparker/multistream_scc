@@ -5,11 +5,13 @@ import mimetypes
 import os
 import threading
 import time
+import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
-from . import accounts, chat
+from . import accounts, chat, streaminfo
+from .tokens import NeedsLogin, Tokens
 from .config import WEB_DIR
 from .log import log, since
 from .relay import Relay
@@ -26,7 +28,9 @@ class StreamApp:
         self.relay = relay or Relay(self.settings)
         self.updater = Updater()
         self.logins = accounts.Logins(self.settings)
-        self.chat = chat.Hub(self.settings)
+        self.tokens = Tokens(self.settings)
+        self.chat = chat.Hub(self.settings, self.tokens)
+        self.pusher = streaminfo.Pusher(self.settings, self.tokens)
         self.open_chat_window = None   # set by the desktop window: opens the chat in its own window
         self.httpd = None
         self._running = False
@@ -35,6 +39,11 @@ class StreamApp:
         snap = self.settings.snapshot()
         return {"destinations": snap["destinations"], "relay": self.relay.state(),
                 "profiles": snap["profiles"], "profile": snap["profile"],
+                "stream_info": streaminfo.merged(next((p.get("info") for p in snap["profiles"]
+                                                       if p["name"] == snap["profile"]), None)),
+                "info_push": self.pusher.info(),
+                "info_ready": {d["platform"]: bool(self.tokens.saved(d["id"]).get("refresh"))
+                               for d in snap["destinations"] if d["platform"] in ("twitch", "youtube")},
                 "platforms": {k: {"name": p["name"], "server": p["server"], "help": p["help"]}
                               for k, p in PLATFORMS.items()},
                 "logins": self.logins.info(), "can_log_in": accounts.available(),
@@ -75,6 +84,21 @@ def make_handler(app):
                 path = "/index.html"
             if path == "/api/state":
                 return self._json(app.state())
+            if path.startswith("/thumbs/"):
+                name = os.path.basename(unquote(path))
+                full = os.path.join(streaminfo.THUMB_DIR, name)
+                if not os.path.isfile(full):
+                    return self._json({"error": "not found"}, 404)
+                with open(full, "rb") as f:
+                    return self._send(f.read(), mimetypes.guess_type(full)[0] or "image/jpeg")
+            if path == "/api/twitch/categories":
+                q = urllib.parse.parse_qs(url.query).get("q", [""])[0]
+                dest = next((d for d in app.settings.destinations() if d["platform"] == "twitch"), None)
+                try:
+                    found = streaminfo.twitch_categories(app.tokens, dest["id"], q) if q and dest else []
+                    return self._json({"categories": found})
+                except (NeedsLogin, streaminfo.ApiError, OSError) as e:
+                    return self._json({"categories": [], "error": str(e)})
             if path == "/api/chat":
                 after = int((dict(p.split("=", 1) for p in url.query.split("&") if "=" in p)).get("after") or 0)
                 return self._json({"messages": app.chat.since(after), "viewers": app.chat.viewers()})
@@ -98,13 +122,18 @@ def make_handler(app):
                 if path == "/api/destination":
                     app.settings.update_destination(body)
                 elif path == "/api/save":
-                    app.settings.save_all(body.get("changes") or [], body.get("profile"))
+                    app.settings.save_all(body.get("changes") or [], body.get("profile"), body.get("info"))
+                    if body.get("info") is not None or any("enabled" in c for c in body.get("changes") or []):
+                        app.pusher.push("saved")
                 elif path == "/api/profile/select":
                     app.settings.select_profile(body.get("name"))
+                    app.pusher.push("profile picked")
                 elif path == "/api/profile/add":
                     app.settings.add_profile(body.get("name"), body.get("platforms") or [])
                     if body.get("changes") is not None:
-                        app.settings.save_all(body["changes"], body.get("name"))
+                        app.settings.save_all(body["changes"], body.get("name"), body.get("info"))
+                elif path == "/api/thumbnail":
+                    return self._json({"name": streaminfo.save_thumbnail(body.get("data"))})
                 elif path == "/api/profile/delete":
                     app.settings.delete_profile(body.get("name"))
                 elif path == "/api/destination/remove":
@@ -153,9 +182,19 @@ def start(app, port):
 
 
 def _follow_chats(app):
+    was_live, ended_at = False, None
     while app._running:
         try:
             app.chat.sync()
+            # After a stream ends, set YouTube up for the next one (its broadcast
+            # ends with the stream) once things have settled.
+            live = app.relay.state()["ingest"]["status"] == "live"
+            if was_live and not live:
+                ended_at = time.monotonic()
+            was_live = live
+            if ended_at and not live and time.monotonic() - ended_at > 30:
+                ended_at = None
+                app.pusher.push("ready for the next stream")
         except Exception as e:
             log(f"Chat error: {type(e).__name__}: {e}", "error")
         time.sleep(2)

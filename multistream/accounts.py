@@ -29,6 +29,8 @@ from .log import log
 
 TWITCH_SERVER = "rtmp://live.twitch.tv/app"
 GRAPH = "https://graph.facebook.com/v21.0"
+# Stream key, plus changing the title/category/tags (Stream info).
+TWITCH_SCOPES = "channel:read:stream_key channel:manage:broadcast user:read:email"
 FACEBOOK_SCOPES = "pages_show_list,pages_read_engagement,pages_read_user_content"
 YOUTUBE_STREAM_TITLE = "SCC Multistream"
 
@@ -116,7 +118,7 @@ class Login:
     def _twitch(self):
         cid = oauth_ids.TWITCH_CLIENT_ID
         dev = _request("https://id.twitch.tv/oauth2/device",
-                       {"client_id": cid, "scopes": "channel:read:stream_key user:read:email"})
+                       {"client_id": cid, "scopes": TWITCH_SCOPES})
         self.code, self.url = dev["user_code"], dev["verification_uri"]
         self.status, self.message = "waiting", "Enter the code on Twitch's page"
         webbrowser.open(self.url)
@@ -128,7 +130,7 @@ class Login:
             try:
                 got = _request("https://id.twitch.tv/oauth2/token", {
                     "client_id": cid, "device_code": dev["device_code"],
-                    "scopes": "channel:read:stream_key user:read:email",
+                    "scopes": TWITCH_SCOPES,
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code"})
                 token = got["access_token"]
                 break
@@ -220,7 +222,9 @@ class Login:
         self.url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
             "client_id": oauth_ids.GOOGLE_CLIENT_ID, "redirect_uri": redirect, "response_type": "code",
             "scope": "https://www.googleapis.com/auth/youtube", "state": state,
-            "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"})
+            "code_challenge": challenge, "code_challenge_method": "S256",
+            # offline + consent: a refresh token, so Stream info can update the broadcast later
+            "access_type": "offline", "prompt": "consent select_account"})
         self.status, self.message = "waiting", "Log in with Google in the browser"
         webbrowser.open(self.url)
         deadline = time.monotonic() + 600
@@ -231,10 +235,11 @@ class Login:
             httpd.server_close()
         if "code" not in result:
             raise LoginError("Cancelled" if self.cancelled else result.get("error") or "The login timed out")
-        token = _step("Google sign-in", lambda: _request("https://oauth2.googleapis.com/token", {
+        granted = _step("Google sign-in", lambda: _request("https://oauth2.googleapis.com/token", {
             "client_id": oauth_ids.GOOGLE_CLIENT_ID, "client_secret": oauth_ids.GOOGLE_CLIENT_SECRET,
             "code": result["code"], "code_verifier": verifier, "grant_type": "authorization_code",
-            "redirect_uri": redirect}, tries=1))["access_token"]
+            "redirect_uri": redirect}, tries=1))
+        token = granted["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
         api = "https://www.googleapis.com/youtube/v3"
         live_hint = ("Check that live streaming is turned on for this channel: open YouTube Studio > Go live "
@@ -260,7 +265,9 @@ class Login:
                 f"{api}/liveStreams?part=snippet,cdn,contentDetails", method="POST",
                 data=json.dumps(new_stream).encode(), headers=json_headers), live_hint)
         ing = stream["cdn"]["ingestionInfo"]
-        return ing["ingestionAddress"], ing["streamName"], name, {"chat": channel_id}
+        # Stream info needs to refresh the login later and to know which stream is ours.
+        saved = json.dumps({"refresh": granted.get("refresh_token") or "", "stream_id": stream["id"]})
+        return ing["ingestionAddress"], ing["streamName"], name, {"chat": channel_id, "token": saved}
 
 
 class Logins:

@@ -294,6 +294,95 @@ class ChatTest(unittest.TestCase):
             chat.Follower.start = real
 
 
+class StreamInfoTest(unittest.TestCase):
+    def setUp(self):
+        from multistream import streaminfo
+        from multistream.tokens import Tokens
+        self.si = streaminfo
+        self.settings = Settings(os.path.join(tempfile.mkdtemp(), "c.json"))
+        self.tokens = Tokens(self.settings)
+        self.tokens.access = lambda dest_id, platform: "ACCESS"
+        self.calls = []
+        self.real_call = streaminfo._call
+
+    def tearDown(self):
+        self.si._call = self.real_call
+
+    def fake(self, responses):
+        def call(url, token, method="GET", body=None, headers=None, raw=None):
+            self.calls.append((method, url.split("?")[0].rsplit("/", 2)[-2:], body))
+            for match, reply in responses:
+                if match in url and (method == "GET") == ("GET" in match or method == "GET"):
+                    return reply(url, body) if callable(reply) else reply
+            return {}
+        self.si._call = call
+
+    def test_tags_and_defaults(self):
+        self.assertEqual(self.si.clean_tags("Esports, #College Esports, esports, a-b!c, " + "x" * 30),
+                         ["Esports", "CollegeEsports", "abc", "x" * 25])
+        info = self.si.merged({"title": "T", "youtube": {"privacy": "unlisted"}})
+        self.assertEqual((info["title"], info["youtube"]["privacy"], info["youtube"]["category"]), ("T", "unlisted", "20"))
+
+    def test_twitch(self):
+        self.fake([("/users", {"data": [{"id": "77"}]})])
+        info = self.si.merged({"title": "Saints vs Lambton", "twitch": {"category_id": "516575", "tags": "esports, valorant"}})
+        self.si.push_twitch(self.tokens, new_destination("twitch"), info)
+        method, path, body = self.calls[-1]
+        self.assertEqual(method, "PATCH")
+        self.assertEqual(body, {"broadcaster_language": "en", "tags": ["esports", "valorant"], "is_branded_content": False,
+                                "title": "Saints vs Lambton", "game_id": "516575"})
+
+    def test_youtube_makes_a_broadcast_for_the_next_stream(self):
+        self.settings.set_token("youtube", json.dumps({"refresh": "r", "stream_id": "S1", "broadcast": "OLD"}))
+        responses = [
+            ("broadcastStatus=active", {"items": []}),
+            ("broadcastStatus=upcoming", {"items": [{"id": "OLD"}]}),
+            ("/liveBroadcasts/bind", {}),
+            ("/liveBroadcasts?part=id,snippet,status,contentDetails", {"id": "NEW"}),
+            ("/videos?part=snippet,status&id=", {"items": [{"id": "NEW", "snippet": {"title": "x", "categoryId": "22"}}]}),
+        ]
+        def call(url, token, method="GET", body=None, headers=None, raw=None):
+            self.calls.append((method, url, body))
+            for match, reply in responses:
+                if match in url:
+                    return reply
+            return {}
+        self.si._call = call
+        info = self.si.merged({"title": "Finals", "youtube": {"privacy": "unlisted", "category": "17"}})
+        msg = self.si.push_youtube(self.tokens, new_destination("youtube"), info)
+        self.assertIn("ready", msg)
+        methods = [(m, u.split("?")[0].split("/v3/")[-1]) for m, u, b in self.calls]
+        self.assertIn(("DELETE", "liveBroadcasts"), methods)
+        self.assertIn(("POST", "liveBroadcasts/bind"), methods)
+        insert = next(b for m, u, b in self.calls if m == "POST" and u.split("?")[0].endswith("liveBroadcasts"))
+        self.assertEqual(insert["snippet"]["title"], "Finals")
+        self.assertTrue(insert["contentDetails"]["enableAutoStart"])
+        put = next(b for m, u, b in self.calls if m == "PUT")
+        self.assertEqual((put["snippet"]["categoryId"], put["status"]["privacyStatus"]), ("17", "unlisted"))
+        self.assertEqual(self.tokens.saved("youtube")["broadcast"], "NEW")
+
+    def test_youtube_updates_a_live_stream(self):
+        self.settings.set_token("youtube", json.dumps({"refresh": "r", "stream_id": "S1"}))
+        def call(url, token, method="GET", body=None, headers=None, raw=None):
+            self.calls.append((method, url, body))
+            if "broadcastStatus=active" in url:
+                return {"items": [{"id": "LIVE", "contentDetails": {"boundStreamId": "S1"}}]}
+            if "/videos?part=snippet,status&id=" in url:
+                return {"items": [{"id": "LIVE", "snippet": {"title": "x"}}]}
+            return {}
+        self.si._call = call
+        msg = self.si.push_youtube(self.tokens, new_destination("youtube"), self.si.merged({"title": "New title"}))
+        self.assertIn("updated", msg)
+        self.assertFalse(any("bind" in u or m == "DELETE" for m, u, b in self.calls))
+
+    def test_pusher_leaves_platforms_alone_without_a_title(self):
+        p = self.si.Pusher(self.settings, self.tokens)
+        self.settings.update_destination({"id": "twitch", "enabled": True})
+        self.settings.set_token("twitch", "refresh")
+        p.push()
+        self.assertEqual(p.info(), {})
+
+
 @unittest.skipUnless(os.path.isfile(tool("mediamtx")) and shutil.which(tool("ffmpeg")),
                      "needs MediaMTX and FFmpeg (python tools/fetch_binaries.py)")
 class EndToEndTest(unittest.TestCase):

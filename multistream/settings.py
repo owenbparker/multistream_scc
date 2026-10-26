@@ -163,7 +163,7 @@ class Settings:
             raise ValueError(f"No profile called {name}")
         return p
 
-    def save_all(self, changes, profile=None):
+    def save_all(self, changes, profile=None, info=None):
         """The control panel's Save: every card's edits (enabled included) in
         one go, and the platforms that are on stored in the chosen profile."""
         with self._lock:
@@ -181,6 +181,8 @@ class Settings:
                 self.data["profile"] = profile
             p = self._profile(self.data["profile"])
             p["platforms"] = [d["id"] for d in dests if d["enabled"]]
+            if info is not None:
+                p["info"] = info      # Stream info (title, category...; see streaminfo.py)
             self.save()
 
     def select_profile(self, name):
@@ -200,7 +202,9 @@ class Settings:
             if any(p["name"].lower() == name.lower() for p in self.data["profiles"]):
                 raise ValueError(f"There's already a profile called {name}")
             ids = {d["id"] for d in self.data["destinations"]}
-            self.data["profiles"].append({"name": name, "platforms": [i for i in platforms if i in ids]})
+            current = next((p for p in self.data["profiles"] if p["name"] == self.data["profile"]), {})
+            self.data["profiles"].append({"name": name, "platforms": [i for i in platforms if i in ids],
+                                          "info": copy.deepcopy(current.get("info") or {})})
             self.save()
 
     def delete_profile(self, name):

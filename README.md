@@ -47,6 +47,30 @@ which platforms are on in the chosen **Profile**. Picking a profile from the
 dropdown switches on exactly its platforms; **New profile** saves the
 current choice under a new name (e.g. "Twitch + YouTube", "Everything").
 
+### Stream info
+
+**Stream info** (below the platform cards) sets the title (both), Twitch's
+category, tags, language and branded-content flag, and YouTube's
+description, category, visibility, latency, DVR, made-for-kids and
+thumbnail. Each profile keeps its own, so a profile can be a whole show
+("Saints VALORANT": platforms + title + category). It's sent when you press
+Save, when you pick the profile, and (YouTube) 30 s after each stream ends,
+so the next stream is ready. Both need "Log in" on their card (log in again
+if you logged in before v1.0.10: the login now asks for these permissions).
+
+For YouTube the app makes the broadcast itself and ties it to your stream
+key, with auto-start: it goes live when OBS starts streaming. During a
+stream, Save changes the live broadcast instead.
+
+Not possible from apps: Twitch's go-live notification text (set it once in
+Twitch's Creator Dashboard > Settings > Stream; followers are notified
+automatically), Twitch's thumbnail (made from the stream), and YouTube's
+"game" field. YouTube notifies subscribers itself when a public stream starts.
+
+Tip: in Google Cloud > Google Auth Platform > Audience, press **Publish app**
+(it can stay unverified). In "Testing", Google ends the YouTube login after 7
+days.
+
 ### Chat and viewers
 
 **Chat** (top right) shows Twitch and YouTube chat in one list, with how
