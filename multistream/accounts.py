@@ -31,26 +31,42 @@ TWITCH_SERVER = "rtmp://live.twitch.tv/app"
 YOUTUBE_STREAM_TITLE = "SCC Multistream"
 
 
-def _request(url, data=None, headers=None, method=None):
+def _request(url, data=None, headers=None, method=None, tries=3):
+    """JSON from an API call. Server errors (5xx) are retried a couple of times."""
     body = urllib.parse.urlencode(data).encode() if isinstance(data, dict) else data
-    req = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read() or b"{}")
-    except urllib.error.HTTPError as e:
+    for attempt in range(tries):
+        req = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
         try:
-            detail = json.loads(e.read())
-        except ValueError:
-            detail = {}
-        err = detail.get("error")
-        message = detail.get("message") or (err.get("message") if isinstance(err, dict) else err)
-        raise LoginError(message or f"HTTP {e.code}", detail) from None
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.loads(e.read())
+            except ValueError:
+                detail = {}
+            if e.code >= 500 and attempt < tries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+            err = detail.get("error")
+            message = detail.get("message") or (err.get("message") if isinstance(err, dict) else err)
+            reasons = [x.get("reason") for x in (err.get("errors") or [])] if isinstance(err, dict) else []
+            raise LoginError(message or f"HTTP {e.code}", detail, e.code, reasons[0] if reasons else None) from None
 
 
 class LoginError(Exception):
-    def __init__(self, message, detail=None):
+    def __init__(self, message, detail=None, code=None, reason=None):
         super().__init__(message)
-        self.detail = detail or {}
+        self.detail, self.code, self.reason = detail or {}, code, reason
+
+
+def _step(what, call, hint=None):
+    """Run one API call; a failure says which step it was (and what to do)."""
+    try:
+        return call()
+    except LoginError as e:
+        log(f"{what} failed: HTTP {e.code} {e.reason or ''} {json.dumps(e.detail)[:500]}", "warn")
+        extra = f" ({e.reason})" if e.reason else ""
+        raise LoginError(f"{what}: {e}{extra}" + (f" {hint}" if hint else ""), e.detail, e.code, e.reason) from None
 
 
 def available():
@@ -166,28 +182,34 @@ class Login:
             httpd.server_close()
         if "code" not in result:
             raise LoginError("Cancelled" if self.cancelled else result.get("error") or "The login timed out")
-        token = _request("https://oauth2.googleapis.com/token", {
+        token = _step("Google sign-in", lambda: _request("https://oauth2.googleapis.com/token", {
             "client_id": oauth_ids.GOOGLE_CLIENT_ID, "client_secret": oauth_ids.GOOGLE_CLIENT_SECRET,
             "code": result["code"], "code_verifier": verifier, "grant_type": "authorization_code",
-            "redirect_uri": redirect})["access_token"]
+            "redirect_uri": redirect}, tries=1))["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
         api = "https://www.googleapis.com/youtube/v3"
-        channels = _request(f"{api}/channels?part=snippet&mine=true", headers=headers).get("items") or []
+        live_hint = ("Check that live streaming is turned on for this channel: open YouTube Studio > Go live "
+                     "once (the first time, YouTube can take up to 24 hours to allow it).")
+        channels = _step("Reading your YouTube channel", lambda: _request(
+            f"{api}/channels?part=snippet&mine=true", headers=headers)).get("items") or []
         if not channels:
-            raise LoginError("That Google account has no YouTube channel")
+            raise LoginError("That Google account has no YouTube channel. If the channel is a brand account, "
+                             "pick it (not the personal account) when Google asks.")
         name = channels[0]["snippet"]["title"]
-        streams = _request(f"{api}/liveStreams?part=snippet,cdn,contentDetails&mine=true&maxResults=50",
-                           headers=headers).get("items") or []
+        streams = _step("Reading your stream keys", lambda: _request(
+            f"{api}/liveStreams?part=snippet,cdn,contentDetails&mine=true&maxResults=50",
+            headers=headers), live_hint).get("items") or []
         reusable = [s for s in streams if s.get("contentDetails", {}).get("isReusable")]
         stream = next((s for s in reusable if s["snippet"]["title"] == YOUTUBE_STREAM_TITLE), None) \
             or (reusable[0] if reusable else None)
         if stream is None:
-            stream = _request(f"{api}/liveStreams?part=snippet,cdn,contentDetails", method="POST",
-                              data=json.dumps({"snippet": {"title": YOUTUBE_STREAM_TITLE},
-                                               "cdn": {"ingestionType": "rtmp", "resolution": "variable",
-                                                       "frameRate": "variable"},
-                                               "contentDetails": {"isReusable": True}}).encode(),
-                              headers={**headers, "Content-Type": "application/json"})
+            json_headers = {**headers, "Content-Type": "application/json"}
+            new_stream = {"snippet": {"title": YOUTUBE_STREAM_TITLE},
+                          "cdn": {"ingestionType": "rtmp", "resolution": "variable", "frameRate": "variable"},
+                          "contentDetails": {"isReusable": True}}
+            stream = _step("Making a stream key", lambda: _request(
+                f"{api}/liveStreams?part=snippet,cdn,contentDetails", method="POST",
+                data=json.dumps(new_stream).encode(), headers=json_headers), live_hint)
         ing = stream["cdn"]["ingestionInfo"]
         return ing["ingestionAddress"], ing["streamName"], name
 
