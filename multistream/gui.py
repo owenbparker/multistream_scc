@@ -146,6 +146,8 @@ def main():
                                        min_size=(900, 560), background_color="#08120c")
         if app:
             app.updater.on_exit = window.destroy
+            app.open_chat_window = lambda u: webview.create_window("SCC Multistream chat", u, width=420, height=760,
+                                                                   background_color="#08120c")
         webview.start(debug=args.debug)
     except Exception as e:
         log(f"Couldn't open the app window ({e!r}); using the web browser instead", "warn")

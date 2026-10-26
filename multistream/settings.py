@@ -43,7 +43,8 @@ def new_destination(platform, **fields):
          "platform": platform if platform in PLATFORMS else "custom",
          "name": p["name"], "enabled": False, "server": p["server"], "key": "",
          "video": p.get("video", COPY), "bitrate": 6000,
-         "account": ""}       # who's logged in, when the key came from logging in
+         "account": "",       # who's logged in, when the key came from logging in
+         "chat": ""}          # Twitch channel / YouTube channel to show the chat of
     d.update(fields)
     return d
 
@@ -51,13 +52,14 @@ def new_destination(platform, **fields):
 def defaults():
     return {"destinations": [new_destination(p) for p in DEFAULT_ORDER],
             "lan": False,          # let other PCs on the network stream in
-            "encoder": "auto"}     # for re-encoded (cropped) outputs
+            "encoder": "auto",     # for re-encoded (cropped) outputs
+            "tokens": {}}          # destination id -> login refresh token (Twitch viewers)
 
 
 def clean_destination(d, old=None):
     """A destination as sent by the control panel -> a saved one. Raises ValueError."""
     out = dict(old or new_destination(str(d.get("platform") or "custom")))
-    for field in ("name", "server", "key", "account"):
+    for field in ("name", "server", "key", "account", "chat"):
         if field in d:
             out[field] = str(d[field] or "").strip()
     if "key" in d and "account" not in d and old and out["key"] != old.get("key"):
@@ -105,7 +107,7 @@ class Settings:
             log(f"Couldn't read {os.path.basename(self.path)} ({e}); using defaults", "warn")
             return
         data = defaults()
-        for k in ("lan", "encoder"):
+        for k in ("lan", "encoder", "tokens"):
             if k in saved:
                 data[k] = saved[k]
         if isinstance(saved.get("destinations"), list):
@@ -143,6 +145,17 @@ class Settings:
         with self._lock:
             self.data["destinations"] = [d for d in self.data["destinations"] if d["id"] != dest_id]
             self.save()
+
+    def token(self, dest_id):
+        with self._lock:
+            return self.data.get("tokens", {}).get(dest_id, "")
+
+    def set_token(self, dest_id, value):
+        with self._lock:
+            tokens = self.data.setdefault("tokens", {})
+            if tokens.get(dest_id, "") != value:
+                tokens[dest_id] = value
+                self.save()
 
     def set(self, **values):
         with self._lock:

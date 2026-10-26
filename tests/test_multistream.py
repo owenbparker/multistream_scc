@@ -168,6 +168,81 @@ class WatcherTest(unittest.TestCase):
         self.assertEqual(self.ingest.source(vertical=True), "live/vertical")
 
 
+class ChatTest(unittest.TestCase):
+    def test_twitch_message_with_emotes(self):
+        from multistream.chat import parse_irc, twitch_parts
+        line = ("@badge-info=;color=#1E90FF;display-name=Saints\\sFan;emotes=25:0-4,12-16/1902:6-10;id=x "
+                ":saintsfan!saintsfan@saintsfan.tmi.twitch.tv PRIVMSG #scc :Kappa Keepo Kappa gg")
+        tags, prefix, command, params, text = parse_irc(line)
+        self.assertEqual((command, params, text), ("PRIVMSG", ["#scc"], "Kappa Keepo Kappa gg"))
+        self.assertEqual(tags["color"], "#1E90FF")
+        parts = twitch_parts(text, tags["emotes"])
+        self.assertEqual([p.get("alt") or p["t"] for p in parts], ["Kappa", " ", "Keepo", " ", "Kappa", " gg"])
+        self.assertIn("/25/", parts[0]["img"])
+
+    def test_twitch_hub_receives_messages(self):
+        from multistream.chat import Hub, TwitchChat
+        hub = Hub(Settings(os.path.join(tempfile.mkdtemp(), "c.json")))
+        tc = TwitchChat(hub, new_destination("twitch", chat="SCC"))
+        self.assertEqual(tc.channel, "scc")
+        sent = []
+        tc._line("PING :tmi.twitch.tv", sent.append)
+        tc._line("@display-name=Fan;bits=100;emotes= :fan!fan@x PRIVMSG #scc :cheer100 hype", sent.append)
+        self.assertEqual(sent, ["PONG :tmi.twitch.tv"])
+        m = hub.since()[0]
+        self.assertEqual((m["author"], m["kind"], m["amount"], m["platform"]), ("Fan", "paid", "100 bits", "twitch"))
+
+    def test_youtube_pieces(self):
+        from multistream.chat import (find_json, first_continuation, youtube_live_url, youtube_messages,
+                                      youtube_viewers)
+        self.assertEqual(youtube_live_url("@SCCSaints"), "https://www.youtube.com/@SCCSaints/live")
+        self.assertEqual(youtube_live_url("UCabcdefghijklmnopqrstuv"),
+                         "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/live")
+        self.assertEqual(youtube_live_url("https://www.youtube.com/@scc/videos"), "https://www.youtube.com/@scc/live")
+        page = 'x<script>window["ytInitialData"] = {"contents": {"liveChatRenderer": {"continuations": [{"invalidationContinuationData": {"continuation": "C1", "timeoutMs": 5000}}]}}};</script>'
+        data = find_json(page, "ytInitialData")
+        self.assertEqual(first_continuation(data["contents"]["liveChatRenderer"]["continuations"]), ("C1", 5000))
+        actions = [
+            {"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+                "authorName": {"simpleText": "Viewer"},
+                "message": {"runs": [{"text": "hi "}, {"emoji": {"emojiId": "😀", "shortcuts": [":grin:"]}},
+                                     {"emoji": {"emojiId": "UC/x", "isCustomEmoji": True, "shortcuts": [":scc:"],
+                                                "image": {"thumbnails": [{"url": "https://yt3/x.png"}]}}}]}}}}},
+            {"addChatItemAction": {"item": {"liveChatPaidMessageRenderer": {
+                "authorName": {"simpleText": "Big Fan"}, "purchaseAmountText": {"simpleText": "CA$5.00"},
+                "message": {"runs": [{"text": "go saints"}]}}}}},
+            {"markChatItemAsDeletedAction": {}},
+        ]
+        msgs = youtube_messages(actions)
+        self.assertEqual(msgs[0][0], "Viewer")
+        self.assertEqual(msgs[0][1], [{"t": "hi "}, {"t": "😀"}, {"img": "https://yt3/x.png", "alt": ":scc:"}])
+        self.assertEqual(msgs[1][2:], ("paid", "CA$5.00"))
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(youtube_viewers([{"updateViewershipAction": {"viewCount": {"videoViewCountRenderer": {
+            "viewCount": {"simpleText": "1,234 watching now"}, "originalViewCount": "1234"}}}}]), 1234)
+        self.assertEqual(youtube_viewers([{"updateViewershipAction": {"viewCount": {"videoViewCountRenderer": {
+            "viewCount": {"runs": [{"text": "56"}, {"text": " watching now"}]}}}}}]), 56)
+
+    def test_hub_follows_only_switched_on_channels(self):
+        from multistream import chat
+        settings = Settings(os.path.join(tempfile.mkdtemp(), "c.json"))
+        hub = chat.Hub(settings)
+        started = []
+        real = chat.Follower.start
+        chat.Follower.start = lambda f: started.append(f.dest["id"])
+        try:
+            settings.update_destination({"id": "twitch", "chat": "scc", "enabled": False})
+            settings.update_destination({"id": "youtube", "chat": "@scc", "enabled": True})
+            settings.update_destination({"id": "x", "chat": "scc", "enabled": True})
+            hub.sync()
+            self.assertEqual(started, ["youtube"])
+            settings.update_destination({"id": "youtube", "enabled": False})
+            hub.sync()
+            self.assertEqual(hub.followers, {})
+        finally:
+            chat.Follower.start = real
+
+
 @unittest.skipUnless(os.path.isfile(tool("mediamtx")) and shutil.which(tool("ffmpeg")),
                      "needs MediaMTX and FFmpeg (python tools/fetch_binaries.py)")
 class EndToEndTest(unittest.TestCase):

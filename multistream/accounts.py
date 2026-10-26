@@ -79,7 +79,7 @@ class Login:
 
     def __init__(self, platform, on_key):
         self.platform = platform
-        self.on_key = on_key          # (server, key, account name) -> None
+        self.on_key = on_key          # (server, key, account name, extras) -> None
         self.status = "starting"      # starting, waiting (for the browser), done, error
         self.message = ""
         self.code = None              # Twitch: the code to type in
@@ -93,10 +93,10 @@ class Login:
 
     def run(self):
         try:
-            server, key, self.account = {"twitch": self._twitch, "youtube": self._youtube}[self.platform]()
+            server, key, self.account, extras = {"twitch": self._twitch, "youtube": self._youtube}[self.platform]()
             if self.cancelled:
                 return
-            self.on_key(server, key, self.account)
+            self.on_key(server, key, self.account, extras)
             self.status, self.message = "done", f"Logged in as {self.account}; stream key saved"
             log(f"{self.platform}: logged in as {self.account}, stream key saved")
         except Exception as e:
@@ -119,10 +119,11 @@ class Login:
         while time.monotonic() < deadline and not self.cancelled:
             time.sleep(interval)
             try:
-                token = _request("https://id.twitch.tv/oauth2/token", {
+                got = _request("https://id.twitch.tv/oauth2/token", {
                     "client_id": cid, "device_code": dev["device_code"],
                     "scopes": "channel:read:stream_key user:read:email",
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code"})["access_token"]
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code"})
+                token = got["access_token"]
                 break
             except LoginError as e:
                 if "authorization_pending" in str(e) or "pending" in str(e).lower():
@@ -137,7 +138,9 @@ class Login:
         user = _request("https://api.twitch.tv/helix/users", headers=headers)["data"][0]
         key = _request(f"https://api.twitch.tv/helix/streams/key?broadcaster_id={user['id']}",
                        headers=headers)["data"][0]["stream_key"]
-        return TWITCH_SERVER, key, user.get("display_name") or user.get("login")
+        # The chat to follow, and a refresh token so the chat can read the viewer count.
+        extras = {"chat": user["login"], "token": got.get("refresh_token") or ""}
+        return TWITCH_SERVER, key, user.get("display_name") or user.get("login"), extras
 
     # --- YouTube: Google sign-in back to this PC -----------------------------
 
@@ -195,7 +198,7 @@ class Login:
         if not channels:
             raise LoginError("That Google account has no YouTube channel. If the channel is a brand account, "
                              "pick it (not the personal account) when Google asks.")
-        name = channels[0]["snippet"]["title"]
+        name, channel_id = channels[0]["snippet"]["title"], channels[0]["id"]
         streams = _step("Reading your stream keys", lambda: _request(
             f"{api}/liveStreams?part=snippet,cdn,contentDetails&mine=true&maxResults=50",
             headers=headers), live_hint).get("items") or []
@@ -211,7 +214,7 @@ class Login:
                 f"{api}/liveStreams?part=snippet,cdn,contentDetails", method="POST",
                 data=json.dumps(new_stream).encode(), headers=json_headers), live_hint)
         ing = stream["cdn"]["ingestionInfo"]
-        return ing["ingestionAddress"], ing["streamName"], name
+        return ing["ingestionAddress"], ing["streamName"], name, {"chat": channel_id}
 
 
 class Logins:
@@ -227,8 +230,11 @@ class Logins:
         if old:
             old.cancelled = True
 
-        def save(server, key, account):
-            self.settings.update_destination({"id": dest_id, "server": server, "key": key, "account": account})
+        def save(server, key, account, extras):
+            self.settings.update_destination({"id": dest_id, "server": server, "key": key, "account": account,
+                                              "chat": extras.get("chat", "")})
+            if extras.get("token"):
+                self.settings.set_token(dest_id, extras["token"])
 
         login = self.current[dest_id] = Login(dest["platform"], save)
         threading.Thread(target=login.run, daemon=True).start()

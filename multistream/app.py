@@ -4,10 +4,12 @@ import json
 import mimetypes
 import os
 import threading
+import time
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
-from . import accounts
+from . import accounts, chat
 from .config import WEB_DIR
 from .log import log, since
 from .relay import Relay
@@ -24,13 +26,17 @@ class StreamApp:
         self.relay = relay or Relay(self.settings)
         self.updater = Updater()
         self.logins = accounts.Logins(self.settings)
+        self.chat = chat.Hub(self.settings)
+        self.open_chat_window = None   # set by the desktop window: opens the chat in its own window
         self.httpd = None
+        self._running = False
 
     def state(self):
         return {"destinations": self.settings.destinations(), "relay": self.relay.state(),
                 "platforms": {k: {"name": p["name"], "server": p["server"], "help": p["help"]}
                               for k, p in PLATFORMS.items()},
                 "logins": self.logins.info(), "can_log_in": accounts.available(),
+                "viewers": self.chat.viewers(),
                 "update": self.updater.info()}
 
 
@@ -67,6 +73,9 @@ def make_handler(app):
                 path = "/index.html"
             if path == "/api/state":
                 return self._json(app.state())
+            if path == "/api/chat":
+                after = int((dict(p.split("=", 1) for p in url.query.split("&") if "=" in p)).get("after") or 0)
+                return self._json({"messages": app.chat.since(after), "viewers": app.chat.viewers()})
             if path == "/api/log":
                 after = int((dict(p.split("=", 1) for p in url.query.split("&") if "=" in p)).get("after") or 0)
                 return self._json({"lines": since(after)})
@@ -94,6 +103,9 @@ def make_handler(app):
                     app.logins.open_page(body.get("id"))
                 elif path == "/api/login/cancel":
                     app.logins.cancel(body.get("id"))
+                elif path == "/api/chat/window":
+                    port = self.server.server_address[1]
+                    (app.open_chat_window or (lambda u: webbrowser.open(u)))(f"http://127.0.0.1:{port}/chat.html")
                 elif path == "/api/lan":
                     app.settings.set(lan=bool(body.get("lan")))
                     app.relay.restart(lan=bool(body.get("lan")))
@@ -121,12 +133,25 @@ def start(app, port):
     threading.Thread(target=app.httpd.serve_forever, daemon=True).start()
     clean_up_old_update()
     app.relay.start()
+    app._running = True
+    threading.Thread(target=_follow_chats, args=(app,), daemon=True).start()
     app.updater.check_in_background()
     log(f"SCC Multistream {app.updater.current} running at http://127.0.0.1:{port}/")
     return app.httpd
 
 
+def _follow_chats(app):
+    while app._running:
+        try:
+            app.chat.sync()
+        except Exception as e:
+            log(f"Chat error: {type(e).__name__}: {e}", "error")
+        time.sleep(2)
+
+
 def stop(app):
+    app._running = False
+    app.chat.stop()
     app.relay.stop()
     if app.httpd:
         app.httpd.shutdown()

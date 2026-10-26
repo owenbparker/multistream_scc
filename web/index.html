@@ -39,7 +39,13 @@
   .update.error { background: #8a2b2b; color: #fff; }
   .danger { background: transparent; border: 1px solid rgba(255, 107, 91, .5); color: #ffb4a8; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 13px; }
 
+  .row { flex: 1; display: flex; min-height: 0; }
   main { flex: 1; overflow: auto; padding: 22px; display: grid; gap: 22px; align-content: start; }
+  #chat { flex: none; width: 380px; border-left: 1px solid var(--line); background: rgba(0, 0, 0, .3); }
+  #chat iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .watching { font-size: 13px; color: var(--muted); }
+  .watching b { color: var(--text); font-variant-numeric: tabular-nums; }
+  #chat-toggle.on { border-color: var(--gold); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(6px); }
 
   /* What's coming in from OBS. */
@@ -122,11 +128,14 @@
   <img src="assets/st-clair-saints.png" alt="">
   <h1>SCC Multistream</h1>
   <div class="right">
+    <span class="watching" id="watching-box" hidden><b id="watching">0</b> watching</span>
     <span class="upload">Upload <b id="upload">0.0 Mbps</b></span>
+    <button class="ghost" id="chat-toggle">Chat</button>
     <span class="version" id="version"></span>
     <button id="update" class="update" hidden></button>
   </div>
 </header>
+<div class="row">
 <main>
   <section class="card" id="input">
     <div>
@@ -148,6 +157,8 @@
   </section>
   <section id="dests"></section>
 </main>
+<aside id="chat" hidden></aside>
+</div>
 <div id="log"></div>
 <footer><span id="summary"></span><button class="ghost" id="log-toggle">Show log</button></footer>
 <div id="toast"></div>
@@ -237,6 +248,8 @@ function formHtml(d) {
     <label>Stream key<span class="key"><input name="key" type="password" value="${esc(d.key)}" spellcheck="false" autocomplete="off"><button type="button" class="ghost show">Show</button></span></label>
     <div class="help">${esc(p.help)}</div>
     <label>Video<select name="video">${opts}</select></label>
+    ${["twitch", "youtube"].includes(d.platform) ? `<label>Chat channel<input name="chat" value="${esc(d.chat)}" placeholder="${d.platform === "twitch" ? "your Twitch channel name" : "@handle or channel ID (UC…)"}" spellcheck="false"></label>
+    <div class="help">Shows this channel's chat and viewers in Chat. Logging in fills it in.</div>` : ""}
     <label class="bitrate">Bitrate (kbps)<input name="bitrate" type="number" min="500" max="20000" step="500" value="${d.bitrate}"></label>
     <div class="buttons"><button class="primary" type="submit">Save</button><button class="ghost cancel" type="button">Cancel</button>
       ${d.platform === "custom" ? `<button class="danger remove" type="button">Remove</button>` : ""}</div>
@@ -259,6 +272,7 @@ function openForm(card, d) {
     e.preventDefault();
     const body = { id: d.id, server: el("server").value, key: el("key").value, video: el("video").value, bitrate: el("bitrate").value };
     if (el("name")) body.name = el("name").value;
+    if (el("chat")) body.chat = el("chat").value;
     if (await post("/api/destination", body)) { closeForm(card); toast(`${d.name} saved`); }
   };
   el("server").focus();
@@ -331,7 +345,8 @@ function renderDests() {
     st.className = "status " + s.cls;
     st.querySelector(".dot").className = "dot " + s.cls;
     st.querySelector(".text").textContent = s.text;
-    st.querySelector(".rate").textContent = s.rate || "";
+    const v = state.viewers[d.id]?.viewers;
+    st.querySelector(".rate").textContent = [s.rate, v != null ? `${v.toLocaleString()} watching` : ""].filter(Boolean).join(" · ");
   }
   if (!box.querySelector(".add")) {
     const add = document.createElement("div");
@@ -355,6 +370,9 @@ function render() {
   renderDests();
   showUpdate(state.update);
   $("upload").textContent = mbps(state.relay.upload_kbps);
+  const counts = Object.values(state.viewers).map(v => v.viewers).filter(v => v != null);
+  $("watching-box").hidden = !counts.length;
+  $("watching").textContent = counts.reduce((a, b) => a + b, 0).toLocaleString();
   const outs = state.relay.outputs, on = state.destinations.filter(d => d.enabled).length;
   const live = outs.filter(o => o.status === "live").length;
   $("summary").textContent = `${on} of ${state.destinations.length} platforms switched on` + (live ? ` · ${live} live` : "");
@@ -372,6 +390,16 @@ document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
   toast("Copied");
 });
 $("restart").onclick = () => post("/api/restart");
+
+// The chat beside the panel (remembered between runs).
+function showChat(on) {
+  $("chat").hidden = !on;
+  $("chat-toggle").classList.toggle("on", on);
+  if (on && !$("chat").firstChild) $("chat").innerHTML = `<iframe src="chat.html?embed=1" title="Chat"></iframe>`;
+  try { localStorage.setItem("chat", on ? "1" : ""); } catch (e) {}
+}
+$("chat-toggle").onclick = () => showChat($("chat").hidden);
+try { showChat(!!localStorage.getItem("chat")); } catch (e) {}
 $("lan").onchange = e => {
   const msg = e.target.checked
     ? "Let other PCs on the network stream in? The RTMP server restarts (any live platforms drop for a moment), and Windows may ask to allow it through the firewall."
