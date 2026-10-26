@@ -19,7 +19,10 @@ from .log import log
 COPY = "copy"           # OBS's stream as it is (no re-encode, almost no CPU)
 CROP = "crop"           # the middle of OBS's 16:9 picture as 9:16, re-encoded
 VERTICAL = "vertical"   # OBS's second, vertical output (stream key "vertical")
-VIDEO_MODES = (COPY, CROP, VERTICAL)
+ENCODE = "encode"       # OBS's picture as it is, re-encoded at a lower bitrate (e.g. Twitch at 8000
+                        # while YouTube gets OBS's 14000 copied)
+VIDEO_MODES = (COPY, CROP, VERTICAL, ENCODE)
+REENCODED = (CROP, ENCODE)
 
 PLATFORMS = {
     "youtube": {"name": "YouTube", "server": "rtmp://a.rtmp.youtube.com/live2",

@@ -12,7 +12,7 @@ from multistream import procs  # noqa: E402
 from multistream.config import tool  # noqa: E402
 from multistream.relay import (CROP_FILTER, Ingest, Output, Relay, explain, ffmpeg_command,  # noqa: E402
                                mediamtx_config, redact)
-from multistream.settings import CROP, VERTICAL, Settings, clean_destination, new_destination, target_url  # noqa: E402
+from multistream.settings import CROP, ENCODE, VERTICAL, Settings, clean_destination, new_destination, target_url  # noqa: E402
 
 
 class SettingsTest(unittest.TestCase):
@@ -124,6 +124,15 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(args[args.index("-vf") + 1], CROP_FILTER)
         self.assertEqual(args[args.index("-c:v") + 1], "h264_nvenc")
         self.assertEqual(args[args.index("-b:v") + 1], "4000k")
+
+    def test_encode_reencodes_the_whole_picture_at_its_bitrate(self):
+        d = new_destination("twitch", key="k", video=ENCODE, bitrate=8000)
+        args = ffmpeg_command(d, "rtmp://127.0.0.1:1935/live/main", encoder="h264_nvenc", ffmpeg="ffmpeg")
+        self.assertEqual(args[args.index("-vf") + 1], "format=nv12")
+        self.assertEqual(args[args.index("-c:v") + 1], "h264_nvenc")
+        self.assertEqual(args[args.index("-b:v") + 1], "8000k")
+        self.assertIn("-force_key_frames", args)
+        self.assertEqual(clean_destination({"video": ENCODE}, d)["video"], ENCODE)
 
     def test_mediamtx_config(self):
         self.assertIn("rtmpAddress: 127.0.0.1:1935", mediamtx_config(False))
@@ -396,6 +405,7 @@ class EndToEndTest(unittest.TestCase):
         settings.data["destinations"] = [
             new_destination("custom", id="a", name="A", enabled=True, server=out, key="a"),
             new_destination("custom", id="b", name="B", enabled=True, server=out, key="b", video=CROP, bitrate=1500),
+            new_destination("custom", id="c", name="C", enabled=True, server=out, key="c", video=ENCODE, bitrate=1000),
         ]
         relay = Relay(settings, Ingest(rtmp_port=19361, api_port=19997, data_dir=work))
         relay.start()
@@ -406,13 +416,13 @@ class EndToEndTest(unittest.TestCase):
         try:
             deadline = time.monotonic() + 45
             while time.monotonic() < deadline:
-                if {"out/a", "out/b"} <= set(relay.ingest.paths) and \
+                if {"out/a", "out/b", "out/c"} <= set(relay.ingest.paths) and \
                         all(o["status"] == "live" for o in relay.state()["outputs"]):
                     break
                 time.sleep(1)
             state = relay.state()
             self.assertEqual(state["ingest"]["status"], "live", json.dumps(state))
-            self.assertTrue({"out/a", "out/b"} <= set(relay.ingest.paths), json.dumps(state))
+            self.assertTrue({"out/a", "out/b", "out/c"} <= set(relay.ingest.paths), json.dumps(state))
             self.assertTrue(all(o["status"] == "live" for o in state["outputs"]), json.dumps(state))
             # OBS stops: the outputs stop with it.
             procs.stop(pub)

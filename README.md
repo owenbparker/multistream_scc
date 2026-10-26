@@ -112,7 +112,7 @@ login app IDs come from the repository's Actions secrets
 **+ Add another RTMP destination** takes any other RTMP/RTMPS server
 (Kick, a second YouTube channel, ...).
 
-### TikTok in vertical
+### Video: copied, re-encoded, or vertical
 
 Each destination's **Video** setting:
 
@@ -121,6 +121,10 @@ Each destination's **Video** setting:
   as 720x1280 (1080x1920 from a 1440p+ canvas) at the bitrate you set. Uses
   the graphics card (NVIDIA, AMD or Intel) when there is one, else the CPU;
   the card shows which.
+- **Re-encoded at a lower bitrate**: the whole picture, re-encoded at the
+  bitrate you set (graphics card when there is one). For a platform that
+  takes less than you send: e.g. OBS at 14000 kbps, YouTube as OBS sends it,
+  Twitch re-encoded at 8000.
 - **OBS vertical output**: for a layout made for vertical. Add a vertical
   canvas in OBS (the [Aitum Vertical](https://aitum.tv/products/vertical)
   plugin) and point its stream at the same server with stream key

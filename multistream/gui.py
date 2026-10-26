@@ -18,7 +18,7 @@ from .app import StreamApp, start, stop
 from .config import DATA_DIR, PORT, tool
 from .log import log
 from .relay import Ingest, Relay
-from .settings import CROP, Settings, new_destination
+from .settings import CROP, ENCODE, Settings, new_destination
 
 TITLE = "SCC Multistream"
 
@@ -42,7 +42,7 @@ def already_running(port):
 def smoke_test(port, rtmp_port=19350, api_port=19987, timeout=60):
     """Used by the build: the packaged app serves its page, and the relay
     works end to end. A test pattern goes into the RTMP server, and two
-    destinations (copied, and cropped to vertical) point back at the same
+    destinations (copied, cropped to vertical, and re-encoded at a lower bitrate) point back at the same
     server, so both must come out the other side. Writes smoke-test.txt
     next to the app; True if all went well."""
     results, ok = [], True
@@ -58,6 +58,8 @@ def smoke_test(port, rtmp_port=19350, api_port=19987, timeout=60):
         new_destination("custom", id="copy", name="Copy", enabled=True, server=f"rtmp://127.0.0.1:{rtmp_port}/out", key="copy"),
         new_destination("custom", id="crop", name="Crop", enabled=True, server=f"rtmp://127.0.0.1:{rtmp_port}/out", key="crop",
                         video=CROP, bitrate=2000),
+        new_destination("custom", id="encode", name="Encode", enabled=True, server=f"rtmp://127.0.0.1:{rtmp_port}/out",
+                        key="encode", video=ENCODE, bitrate=1500),
     ]
     app = StreamApp(settings, Relay(settings, Ingest(rtmp_port=rtmp_port, api_port=api_port, data_dir=work)))
     publisher = None
@@ -90,19 +92,19 @@ def smoke_test(port, rtmp_port=19350, api_port=19987, timeout=60):
         while time.monotonic() < deadline:
             state = app.relay.state()
             outs = {o["id"]: o for o in state["outputs"]}
-            if all(outs.get(i, {}).get("status") == "live" for i in ("copy", "crop")) \
-                    and {"out/copy", "out/crop"} <= set(app.relay.ingest.paths):
+            if all(outs.get(i, {}).get("status") == "live" for i in ("copy", "crop", "encode")) \
+                    and {"out/copy", "out/crop", "out/encode"} <= set(app.relay.ingest.paths):
                 break
             time.sleep(1)
         check("OBS stream received", state.get("ingest", {}).get("status") == "live",
               f"{state.get('ingest', {}).get('kbps')} kbps, {state.get('ingest', {}).get('tracks')}")
         outs = {o["id"]: o for o in state.get("outputs", [])}
-        for i in ("copy", "crop"):
+        for i in ("copy", "crop", "encode"):
             o = outs.get(i, {})
             arrived = f"out/{i}" in app.relay.ingest.paths
             check(f"{i} output live", o.get("status") == "live" and arrived,
                   f"{o.get('status')}: {o.get('message') or ''} {o.get('kbps')} kbps".strip())
-        check("crop encoder", bool(app.relay.encoder), app.relay.encoder or "none")
+        check("encoder", bool(app.relay.encoder), app.relay.encoder or "none")
     except Exception as e:
         check("smoke test", False, f"{type(e).__name__}: {e}")
     finally:

@@ -6,8 +6,9 @@ sends it on.
                                             +--> ffmpeg --> ...
 
 Each FFmpeg copies the stream as it is (no re-encode), except a cropped
-vertical output, which re-encodes the middle of the picture as 9:16 (on the
-graphics card when there is one). A watcher checks every second: when OBS
+vertical output, which re-encodes the middle of the picture as 9:16, and a
+"re-encoded" one, which sends the whole picture at a lower bitrate than OBS's
+(both on the graphics card when there is one). A watcher checks every second: when OBS
 starts streaming, every platform that's switched on goes live; one that
 drops is retried (2 s, 4 s, ... up to 30 s apart) while the others carry on;
 when OBS stops, they all stop.
@@ -23,7 +24,7 @@ import urllib.request
 from . import procs
 from .config import API_PORT, DATA_DIR, RTMP_PORT, tool
 from .log import log
-from .settings import COPY, CROP, VERTICAL, target_url
+from .settings import CROP, ENCODE, REENCODED, VERTICAL, target_url
 
 VERTICAL_KEY = "vertical"
 RETRY_DELAYS = (2, 4, 8, 15, 30)
@@ -183,7 +184,7 @@ class Ingest:
         self.proc, self.paths = None, {}
 
 
-# --- Encoder for the cropped vertical output ---------------------------------
+# --- Encoder for re-encoded outputs (cropped, or at a lower bitrate) ---------------------------------
 
 def find_encoder(ffmpeg=None):
     """The first H.264 encoder that works on this PC: NVIDIA, AMD, Intel, else the CPU."""
@@ -217,8 +218,9 @@ CROP_FILTER = ("crop=trunc(ih*9/16/2)*2:ih,"
 def ffmpeg_command(dest, source_url, encoder="libx264", ffmpeg=None):
     args = [ffmpeg or tool("ffmpeg"), "-hide_banner", "-nostats", "-loglevel", "error",
             "-progress", "pipe:1", "-rw_timeout", "10000000", "-i", source_url]
-    if dest.get("video") == CROP:
-        args += ["-map", "0:v:0", "-map", "0:a:0?", "-vf", CROP_FILTER] + encoder_args(encoder, int(dest.get("bitrate") or 6000))
+    if dest.get("video") in REENCODED:
+        vf = CROP_FILTER if dest["video"] == CROP else "format=nv12"
+        args += ["-map", "0:v:0", "-map", "0:a:0?", "-vf", vf] + encoder_args(encoder, int(dest.get("bitrate") or 6000))
         args += ["-force_key_frames", "expr:gte(t,n_forced*2)", "-c:a", "copy"]
     else:
         args += ["-map", "0", "-c", "copy"]
@@ -347,7 +349,7 @@ class Relay:
     def _pick_encoder(self):
         chosen = self.settings.snapshot().get("encoder") or "auto"
         self.encoder = find_encoder() if chosen == "auto" else chosen
-        log(f"Vertical crop encodes with {self.encoder}")
+        log(f"Re-encoded outputs (vertical crop, lower bitrate) use {self.encoder}")
 
     def restart(self, lan=None):
         """Restart the RTMP server (e.g. after changing who can stream in)."""
@@ -426,7 +428,7 @@ class Relay:
             out.stop("waiting", waiting)
             out.failures = 0
             return
-        if dest.get("video") == CROP and not self.encoder:
+        if dest.get("video") in REENCODED and not self.encoder:
             out.stop("starting", "Finding the best encoder…")
             return
         args = ffmpeg_command(dest, self.ingest.url(source), self.encoder or "libx264")

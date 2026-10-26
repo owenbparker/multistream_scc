@@ -260,7 +260,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const showUpdate = updateButton($("update"), $("version"));
-const MODES = { copy: "As OBS sends it", crop: "Cropped to vertical (9:16)", vertical: "OBS vertical output" };
+const MODES = { copy: "As OBS sends it", encode: "Re-encoded at a lower bitrate", crop: "Cropped to vertical (9:16)", vertical: "OBS vertical output" };
+const REENCODED = ["crop", "encode"];
 const LOGOS = ["youtube", "twitch", "x", "tiktok", "facebook"];   // web/assets/platforms/<id>.png
 let state = null, editing = null;
 // Edits not saved yet: destination id -> changed fields (enabled included).
@@ -332,7 +333,7 @@ function statusLine(d, o) {
 }
 
 function modeText(d) {
-  if (d.video === "crop") return `${MODES.crop} · ${d.bitrate} kbps` + (state.relay.encoder ? ` · ${state.relay.encoder}` : "");
+  if (REENCODED.includes(d.video)) return `${MODES[d.video]} · ${d.bitrate} kbps` + (state.relay.encoder ? ` · ${state.relay.encoder}` : "");
   return MODES[d.video];
 }
 
@@ -359,6 +360,7 @@ function formHtml(d) {
     ${["twitch", "youtube"].includes(d.platform) ? `<label>Chat channel<input name="chat" value="${esc(d.chat)}" placeholder="${d.platform === "twitch" ? "your Twitch channel name" : "@handle or channel ID (UC…)"}" spellcheck="false"></label>
     <div class="help">Shows this channel's chat and viewers in Chat. Logging in fills it in.</div>` : ""}
     <label class="bitrate">Bitrate (kbps)<input name="bitrate" type="number" min="500" max="20000" step="500" value="${d.bitrate}"></label>
+    <div class="help encode-help">For a platform that takes less than you send from OBS: e.g. OBS at 14000 for YouTube, and Twitch re-encoded at 8000. Uses the graphics card when there is one.</div>
     <div class="buttons"><button class="ghost cancel" type="button">Done</button>
       ${d.platform === "custom" ? `<button class="danger remove" type="button">Remove</button>` : ""}</div>
   </form>`;
@@ -369,7 +371,10 @@ function openForm(card, d) {
   card.querySelector(".actions").hidden = true;
   card.insertAdjacentHTML("beforeend", formHtml(d));
   const f = card.querySelector("form"), el = n => f.elements.namedItem(n);
-  const syncBitrate = () => f.querySelector(".bitrate").hidden = el("video").value !== "crop";
+  const syncBitrate = () => {
+    f.querySelector(".bitrate").hidden = !REENCODED.includes(el("video").value);
+    f.querySelector(".encode-help").hidden = el("video").value !== "encode";
+  };
   syncBitrate();
   el("video").onchange = syncBitrate;
   f.querySelector(".show").onclick = e => { const k = el("key"); k.type = k.type === "password" ? "text" : "password"; e.target.textContent = k.type === "password" ? "Show" : "Hide"; };
