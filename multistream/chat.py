@@ -8,7 +8,10 @@ watching on each.
              youtube.com chat window reads them (no login, no API quota).
              Waits for the channel to be live, then follows that stream.
 
-X, TikTok and Facebook have no way for an app to read their live chat.
+    Facebook the Page's live video comments and viewers, from Facebook's API,
+             using the Page access from "Log in with Facebook".
+
+X and TikTok have no way for an app to read their live chat.
 
 Each platform that's switched on and has a chat channel set is followed;
 the control panel (and its /chat.html page, which also works as an OBS
@@ -61,7 +64,9 @@ class Hub:
         want = {}
         for d in self.settings.destinations():
             channel = (d.get("chat") or "").strip()
-            if d["enabled"] and channel and d["platform"] in ("twitch", "youtube"):
+            if d["platform"] == "facebook" and not self.settings.token(d["id"]):
+                channel = ""
+            if d["enabled"] and channel and d["platform"] in ("twitch", "youtube", "facebook"):
                 want[d["id"]] = d
         for dest_id in list(self.followers):
             f = self.followers[dest_id]
@@ -71,7 +76,7 @@ class Hub:
                 del self.followers[dest_id]
         for dest_id, d in want.items():
             if dest_id not in self.followers:
-                cls = TwitchChat if d["platform"] == "twitch" else YouTubeChat
+                cls = {"twitch": TwitchChat, "youtube": YouTubeChat, "facebook": FacebookChat}[d["platform"]]
                 f = self.followers[dest_id] = cls(self, d)
                 f.start()
 
@@ -385,3 +390,62 @@ class YouTubeChat(Follower):
             cont, wait = first_continuation(chat.get("continuations"))
             if not cont:
                 return
+
+
+# --- Facebook ----------------------------------------------------------------
+
+GRAPH = "https://graph.facebook.com/v21.0"
+
+
+class FacebookChat(Follower):
+    """Polls each logged-in Page for a live video, then its comments and viewers."""
+
+    def _get(self, path, token, **params):
+        params["access_token"] = token
+        url = f"{GRAPH}/{path}?{urllib.parse.urlencode(params)}"
+        try:
+            with urllib.request.urlopen(url, timeout=15) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            try:
+                err = json.loads(e.read()).get("error") or {}
+            except ValueError:
+                err = {}
+            if err.get("code") == 190:    # the login no longer works
+                raise PermissionError("Log in with Facebook again") from None
+            raise RuntimeError(err.get("message") or f"HTTP {e.code}") from None
+
+    def run(self):
+        pages = json.loads(self.hub.settings.token(self.dest["id"]) or "{}")
+        seen = set()
+        first = {}                       # live video id -> True once its old comments are skipped
+        self.status, self.message = "waiting", "Waiting for the Page to go live"
+        last_views = 0
+        while not self._stop.is_set():
+            live, views = [], 0
+            for page_id, page in pages.items():
+                got = self._get(f"{page_id}/live_videos", page["token"], broadcast_status='["LIVE"]',
+                                fields="id,live_views,status")
+                for v in got.get("data") or []:
+                    live.append((v["id"], page["token"]))
+                    views += int(v.get("live_views") or 0)
+            if live:
+                self.status, self.message = "connected", ""
+                if time.monotonic() - last_views >= 5:
+                    self.viewers, last_views = views, time.monotonic()
+                for video_id, token in live:
+                    got = self._get(f"{video_id}/comments", token, order="reverse_chronological",
+                                    live_filter="no_filter", limit=50, fields="id,from{name},message")
+                    fresh = [c for c in got.get("data") or [] if c["id"] not in seen]
+                    seen.update(c["id"] for c in fresh)
+                    if video_id not in first:    # joining mid-stream: don't replay the backlog
+                        first[video_id] = True
+                        continue
+                    for c in reversed(fresh):
+                        name = (c.get("from") or {}).get("name") or "Facebook user"
+                        self.hub.add(self.dest, name, [{"t": c.get("message") or ""}])
+                self._stop.wait(3)
+            else:
+                self.viewers = None
+                self.status, self.message = "waiting", "Waiting for the Page to go live"
+                self._stop.wait(15)

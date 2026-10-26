@@ -55,8 +55,10 @@ follows each platform that's switched on and has its **Chat channel** set
 (logging in fills it in). **Open in its own window** pops it out, and
 `http://127.0.0.1:8775/chat.html` works as an OBS custom browser dock.
 Twitch viewer counts need "Log in with Twitch" (done once). YouTube's chat
-and viewers are read the way youtube.com's own chat window reads them. X,
-TikTok and Facebook don't let apps read their live chat.
+and viewers are read the way youtube.com's own chat window reads them. Facebook's
+comments and viewers come from the Page you pick in "Log in with Facebook"
+(that login is only for chat and viewers; the stream key is still pasted).
+X and TikTok don't let apps read their live chat or viewers.
 
 A platform that drops (or refuses the key) is retried 2, 4, 8, 15, then
 every 30 seconds while the others keep going; its card shows why. **Show
@@ -80,7 +82,8 @@ stream key, making one called "SCC Multistream" if there isn't one. Only
 the key is saved, so logging in again is only needed if the key changes.
 X and TikTok have no way for apps to fetch keys, and stay pasted. The
 login app IDs come from the repository's Actions secrets
-(`TWITCH_CLIENT_ID`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
+(`TWITCH_CLIENT_ID`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`FACEBOOK_APP_ID`, `FACEBOOK_CLIENT_TOKEN`).
 
 **+ Add another RTMP destination** takes any other RTMP/RTMPS server
 (Kick, a second YouTube channel, ...).

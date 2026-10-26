@@ -28,6 +28,8 @@ from . import oauth_ids
 from .log import log
 
 TWITCH_SERVER = "rtmp://live.twitch.tv/app"
+GRAPH = "https://graph.facebook.com/v21.0"
+FACEBOOK_SCOPES = "pages_show_list,pages_read_engagement,pages_read_user_content"
 YOUTUBE_STREAM_TITLE = "SCC Multistream"
 
 
@@ -71,7 +73,8 @@ def _step(what, call, hint=None):
 
 def available():
     return {"twitch": bool(oauth_ids.TWITCH_CLIENT_ID),
-            "youtube": bool(oauth_ids.GOOGLE_CLIENT_ID and oauth_ids.GOOGLE_CLIENT_SECRET)}
+            "youtube": bool(oauth_ids.GOOGLE_CLIENT_ID and oauth_ids.GOOGLE_CLIENT_SECRET),
+            "facebook": bool(oauth_ids.FACEBOOK_APP_ID and oauth_ids.FACEBOOK_CLIENT_TOKEN)}
 
 
 class Login:
@@ -93,12 +96,16 @@ class Login:
 
     def run(self):
         try:
-            server, key, self.account, extras = {"twitch": self._twitch, "youtube": self._youtube}[self.platform]()
+            server, key, self.account, extras = {"twitch": self._twitch, "youtube": self._youtube,
+                                                 "facebook": self._facebook}[self.platform]()
             if self.cancelled:
                 return
             self.on_key(server, key, self.account, extras)
-            self.status, self.message = "done", f"Logged in as {self.account}; stream key saved"
-            log(f"{self.platform}: logged in as {self.account}, stream key saved")
+            if key is None:   # Facebook: chat and viewers only
+                self.status, self.message = "done", f"Connected to {self.account} for chat and viewers"
+            else:
+                self.status, self.message = "done", f"Logged in as {self.account}; stream key saved"
+            log(f"{self.platform}: logged in as {self.account}")
         except Exception as e:
             if not self.cancelled:
                 self.status, self.message = "error", str(e)
@@ -141,6 +148,45 @@ class Login:
         # The chat to follow, and a refresh token so the chat can read the viewer count.
         extras = {"chat": user["login"], "token": got.get("refresh_token") or ""}
         return TWITCH_SERVER, key, user.get("display_name") or user.get("login"), extras
+
+    # --- Facebook: device login, for the Pages' live viewers and comments ---
+
+    def _facebook(self):
+        app_token = f"{oauth_ids.FACEBOOK_APP_ID}|{oauth_ids.FACEBOOK_CLIENT_TOKEN}"
+        dev = _request(f"{GRAPH}/device/login", {"access_token": app_token, "scope": FACEBOOK_SCOPES})
+        self.code, self.url = dev["user_code"], dev.get("verification_uri") or "https://www.facebook.com/device"
+        self.status, self.message = "waiting", "Enter the code on Facebook's page"
+        webbrowser.open(self.url)
+        deadline = time.monotonic() + int(dev.get("expires_in", 420))
+        interval = int(dev.get("interval", 5))
+        token = None
+        while time.monotonic() < deadline and not self.cancelled:
+            time.sleep(interval)
+            try:
+                token = _request(f"{GRAPH}/device/login_status",
+                                 {"access_token": app_token, "code": dev["code"]}, tries=1)["access_token"]
+                break
+            except LoginError as e:
+                sub = ((e.detail.get("error") or {}) if isinstance(e.detail.get("error"), dict) else {}).get("error_subcode")
+                if sub == 1349174:     # waiting for the user
+                    continue
+                if sub == 1349172:     # polling too fast
+                    interval += 5
+                    continue
+                if sub == 1349152:
+                    raise LoginError("The code expired; press Log in again") from None
+                raise
+        if not token:
+            raise LoginError("The login timed out" if not self.cancelled else "Cancelled")
+        pages = _step("Reading your Facebook Pages", lambda: _request(
+            f"{GRAPH}/me/accounts?fields=id,name,access_token&limit=50&access_token={urllib.parse.quote(token)}"))
+        pages = {p["id"]: {"name": p["name"], "token": p["access_token"]}
+                 for p in pages.get("data") or [] if p.get("access_token")}
+        if not pages:
+            raise LoginError("No Facebook Pages came back. When Facebook asks, choose the Page you stream to.")
+        names = ", ".join(p["name"] for p in pages.values())
+        # Page tokens from this login don't expire; the chat uses them for comments and viewers.
+        return None, None, names, {"chat": ",".join(pages), "token": json.dumps(pages)}
 
     # --- YouTube: Google sign-in back to this PC -----------------------------
 
@@ -231,8 +277,10 @@ class Logins:
             old.cancelled = True
 
         def save(server, key, account, extras):
-            self.settings.update_destination({"id": dest_id, "server": server, "key": key, "account": account,
-                                              "chat": extras.get("chat", "")})
+            change = {"id": dest_id, "account": account, "chat": extras.get("chat", "")}
+            if key is not None:
+                change.update(server=server, key=key)
+            self.settings.update_destination(change)
             if extras.get("token"):
                 self.settings.set_token(dest_id, extras["token"])
 

@@ -59,14 +59,14 @@ class SettingsTest(unittest.TestCase):
 
     def test_login_needs_the_app_ids(self):
         from multistream import accounts, oauth_ids
-        saved = (oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID)
+        saved = (oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID, oauth_ids.FACEBOOK_APP_ID)
         try:
-            oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID = "", ""
-            self.assertEqual(accounts.available(), {"twitch": False, "youtube": False})
+            oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID, oauth_ids.FACEBOOK_APP_ID = "", "", ""
+            self.assertEqual(accounts.available(), {"twitch": False, "youtube": False, "facebook": False})
             with self.assertRaises(ValueError):
                 accounts.Logins(Settings(self.path)).start("twitch")
         finally:
-            oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID = saved
+            oauth_ids.TWITCH_CLIENT_ID, oauth_ids.GOOGLE_CLIENT_ID, oauth_ids.FACEBOOK_APP_ID = saved
 
     def test_profiles(self):
         s = Settings(self.path)
@@ -250,6 +250,29 @@ class ChatTest(unittest.TestCase):
             "viewCount": {"simpleText": "1,234 watching now"}, "originalViewCount": "1234"}}}}]), 1234)
         self.assertEqual(youtube_viewers([{"updateViewershipAction": {"viewCount": {"videoViewCountRenderer": {
             "viewCount": {"runs": [{"text": "56"}, {"text": " watching now"}]}}}}}]), 56)
+
+    def test_facebook_comments_and_viewers(self):
+        from multistream import chat
+        settings = Settings(os.path.join(tempfile.mkdtemp(), "c.json"))
+        settings.set_token("facebook", json.dumps({"p1": {"name": "SCC", "token": "t"}}))
+        hub = chat.Hub(settings)
+        fb = chat.FacebookChat(hub, new_destination("facebook", chat="p1"))
+        calls = {"n": 0}
+        def fake(path, token, **params):
+            if path.endswith("live_videos"):
+                return {"data": [{"id": "v1", "live_views": 42}]}
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"data": [{"id": "c0", "from": {"name": "Old"}, "message": "before we joined"}]}
+            if calls["n"] == 2:
+                fb.stop()
+                return {"data": [{"id": "c2", "from": {"name": "B"}, "message": "two"},
+                                 {"id": "c1", "message": "one"}, {"id": "c0", "message": "old"}]}
+            return {"data": []}
+        fb._get = fake
+        fb.run()
+        self.assertEqual(fb.viewers, 42)
+        self.assertEqual([(m["author"], m["parts"][0]["t"]) for m in hub.since()], [("Facebook user", "one"), ("B", "two")])
 
     def test_hub_follows_only_switched_on_channels(self):
         from multistream import chat

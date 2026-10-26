@@ -14,8 +14,15 @@ they stay out of the code. Running from source, set them here locally.
              account as a test user) and an OAuth client of type "Desktop
              app". Its Client ID and secret go here (Google treats a desktop
              app's secret as public).
+    Facebook developers.facebook.com: an app with Facebook Login, "Login from
+             Devices" switched on, and the Pages permissions (pages_show_list,
+             pages_read_engagement, pages_read_user_content). Its App ID and
+             Client token (Settings > Advanced) go here. Used for the Page's
+             live viewers and comments only; the stream key is still pasted.
 """
 
 TWITCH_CLIENT_ID = ""
 GOOGLE_CLIENT_ID = ""
 GOOGLE_CLIENT_SECRET = ""
+FACEBOOK_APP_ID = ""
+FACEBOOK_CLIENT_TOKEN = ""

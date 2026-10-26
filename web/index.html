@@ -260,7 +260,7 @@ function modeText(d) {
   return MODES[d.video];
 }
 
-const PLATFORM_NAMES = { twitch: "Twitch", youtube: "YouTube" };
+const PLATFORM_NAMES = { twitch: "Twitch", youtube: "YouTube", facebook: "Facebook" };
 
 function cardHtml(d) {
   return `<div class="top"><div class="badge ${d.platform}">${LOGOS.includes(d.platform) ? `<img src="assets/platforms/${d.platform}.png" alt="">` : "R"}</div>
