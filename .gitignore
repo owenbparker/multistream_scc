@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+bin/
+config.json
+config.json.tmp
+mediamtx.yml
+smoke-test.txt
+_update/
+build/
+dist/

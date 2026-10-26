@@ -1,0 +1,108 @@
+# Builds SCC Multistream (SCCMultistream.exe) on Windows and publishes it as a
+# GitHub release (v1.0.<run number>) with SCCMultistream-windows.zip and
+# SCC-Multistream-Setup.exe, an installer that downloads the latest release
+# from GitHub when it runs. The app checks the latest release on launch and
+# offers to update itself.
+#
+# A commit with [no release] in its message builds and tests without publishing.
+#
+# Every run also leaves the zip on the run's summary page (Actions tab).
+name: Build Windows app
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VERSION: v1.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller -r requirements-windows.txt
+
+      - name: Download MediaMTX and FFmpeg
+        run: python tools/fetch_binaries.py
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Stamp the version
+        shell: pwsh
+        run: |
+          Set-Content multistream/version.py "VERSION = `"$env:VERSION`"" -Encoding utf8
+          Get-Content multistream/version.py
+
+      - name: Build SCCMultistream.exe
+        run: pyinstaller --noconfirm SCCMultistream.spec
+
+      - name: Smoke test the built app (a test stream through the relay, copied and cropped)
+        shell: pwsh
+        run: |
+          $app = "dist\SCCMultistream"
+          $p = Start-Process "$app\SCCMultistream.exe" -ArgumentList '--smoke-test', '--port', '8779' -PassThru -Wait
+          Get-Content "$app\smoke-test.txt"
+          if ($p.ExitCode -ne 0) { throw "Smoke test failed (exit code $($p.ExitCode))" }
+          # Leave no test leftovers in the download.
+          Remove-Item "$app\smoke-test.txt", "$app\config.json", "$app\mediamtx.yml" -ErrorAction SilentlyContinue
+          Remove-Item "$app\_update" -Recurse -ErrorAction SilentlyContinue
+
+      - name: Add readme and version.txt
+        shell: pwsh
+        run: |
+          Copy-Item README.md dist\SCCMultistream\
+          Set-Content dist\SCCMultistream\version.txt $env:VERSION -NoNewline
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SCCMultistream-windows
+          path: dist/SCCMultistream
+
+      - name: Build the installer
+        if: "!contains(github.event.head_commit.message, '[no release]')"
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
+          & $iscc "/DAppVersion=$($env:VERSION.TrimStart('v'))" installer\SCC-Multistream.iss
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Publish release
+        if: "!contains(github.event.head_commit.message, '[no release]')"
+        # The app zip and the installer go up together, so the latest release
+        # always has both (the installer link never 404s mid-build).
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\SCCMultistream\* -DestinationPath SCCMultistream-windows.zip
+          $notes = git log -1 --format=%B | Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' }
+          $notes = ($notes -join "`n").Trim()
+          gh release create "$env:VERSION" SCCMultistream-windows.zip dist\SCC-Multistream-Setup.exe --target "${{ github.sha }}" --title "SCC Multistream $env:VERSION" --notes "$notes"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Test the installer (silent; installs the release just published)
+        if: "!contains(github.event.head_commit.message, '[no release]')"
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP\SCC Multistream test"
+          $installArgs = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/MERGETASKS="!desktopicon"', '/LOG=install.log'
+          $p = Start-Process dist\SCC-Multistream-Setup.exe -ArgumentList $installArgs -PassThru -Wait
+          Get-Content install.log -Tail 25
+          if ($p.ExitCode -ne 0) { throw "Installer failed (exit code $($p.ExitCode))" }
+          foreach ($f in @("SCCMultistream.exe", "_internal\bin\ffmpeg.exe", "_internal\bin\mediamtx.exe")) {
+            if (-not (Test-Path "$dir\$f")) { throw "$f wasn't installed" }
+          }
+          Write-Host "Installed OK to $dir"

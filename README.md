@@ -1,0 +1,101 @@
+# SCC Multistream
+
+Stream once from OBS and go live on YouTube, Twitch, X, TikTok and Facebook
+(and any other RTMP server) at the same time, from your own PC, with no
+Restream subscription.
+
+```
+OBS --> SCC Multistream (rtmp://127.0.0.1:1935/live) --+--> YouTube
+                                                        +--> Twitch
+                                                        +--> X
+                                                        +--> TikTok (cropped to 9:16, or OBS's vertical canvas)
+                                                        +--> Facebook
+```
+
+The app runs a small RTMP server ([MediaMTX](https://github.com/bluenviron/mediamtx))
+that OBS streams to, and one [FFmpeg](https://ffmpeg.org) per platform that
+sends the stream on **without re-encoding it**, so it takes almost no CPU.
+Your upload has to carry one copy per platform (about 5 x your OBS bitrate
+for all five).
+
+## Install
+
+Download **SCC-Multistream-Setup.exe** from the
+[latest release](https://github.com/owenbparker/multistream_scc/releases/latest)
+and run it. It installs to `C:\SCC Multistream` with a desktop shortcut. The
+app checks for updates when it opens (don't update mid-stream: the streams
+drop while it restarts).
+
+## Use
+
+1. In OBS, **Settings > Stream**: Service **Custom**, Server
+   `rtmp://127.0.0.1:1935/live`, Stream key `main` (both shown in the app
+   with Copy buttons). In **Settings > Output**, set the keyframe interval to
+   2 s (every platform asks for it).
+2. In the app, open **Server and key** on each platform, paste in its
+   stream key (and server where there's no default), and switch it on.
+3. Start streaming in OBS. Every platform that's switched on goes live; when
+   you stop, they all stop. Switch a platform on or off mid-stream and only
+   that one starts or stops.
+
+A platform that drops (or refuses the key) is retried 2, 4, 8, 15, then
+every 30 seconds while the others keep going; its card shows why. **Show
+log** at the bottom has the details.
+
+### Where each platform's key is
+
+| Platform | Server | Where to find it |
+| --- | --- | --- |
+| YouTube | filled in | YouTube Studio > Go live > Stream > Stream key |
+| Twitch | filled in | Creator Dashboard > Settings > Stream > Primary Stream key |
+| X | from X | Media Studio > Producer > Sources: create a source; copy its RTMP URL and key. Needs Media Studio/Producer access on the account. |
+| TikTok | from TikTok | LIVE Studio / LIVE Center > Stream key. TikTok only gives keys to accounts with LIVE access, and the key can change each time you go live. |
+| Facebook | filled in (RTMPS) | Live Producer > Streaming software > Stream key (pick a persistent key) |
+
+**+ Add another RTMP destination** takes any other RTMP/RTMPS server
+(Kick, a second YouTube channel, ...).
+
+### TikTok in vertical
+
+Each destination's **Video** setting:
+
+- **As OBS sends it**: the stream as it is (the default).
+- **Cropped to vertical (9:16)**: the middle of the 16:9 picture, re-encoded
+  as 720x1280 (1080x1920 from a 1440p+ canvas) at the bitrate you set. Uses
+  the graphics card (NVIDIA, AMD or Intel) when there is one, else the CPU;
+  the card shows which.
+- **OBS vertical output**: for a layout made for vertical. Add a vertical
+  canvas in OBS (the [Aitum Vertical](https://aitum.tv/products/vertical)
+  plugin) and point its stream at the same server with stream key
+  `vertical`. Passed on as it is, like the main stream.
+
+### Another PC streaming in
+
+Tick **Let other PCs on the network stream in** and the server also
+listens on the network (the app shows the address, e.g.
+`rtmp://192.168.1.20:1935/live`). Windows may ask to allow it through the
+firewall. Off by default, so only this PC can stream in.
+
+## Files
+
+`C:\SCC Multistream\config.json` holds the servers and stream keys (in plain
+text, on this PC only; the control panel only answers this PC). Uninstalling
+removes it.
+
+## From source
+
+```
+pip install -r requirements-windows.txt
+python tools/fetch_binaries.py       # MediaMTX + FFmpeg into bin/ (--linux: MediaMTX for Linux)
+python -m multistream.gui            # the desktop app
+python -m multistream                # without a window: http://127.0.0.1:8775/
+python -m unittest discover -s tests # includes an end-to-end test stream through the relay
+```
+
+Every push builds on GitHub Actions (Windows), runs the tests and a smoke
+test of the built app (a test stream through the relay, copied and cropped)
+and publishes release `v1.0.<run>`; `[no release]` in the commit message
+skips publishing.
+
+MediaMTX (MIT) and FFmpeg (GPL, gyan.dev essentials build) are bundled
+unchanged; their licenses are in `_internal\bin\licenses`.

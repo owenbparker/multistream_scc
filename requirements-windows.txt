@@ -1,0 +1,2 @@
+# Desktop app extras (Windows): the app window.
+pywebview
