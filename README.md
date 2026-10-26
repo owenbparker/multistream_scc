@@ -52,6 +52,16 @@ log** at the bottom has the details.
 | TikTok | from TikTok | LIVE Studio / LIVE Center > Stream key. TikTok only gives keys to accounts with LIVE access, and the key can change each time you go live. |
 | Facebook | filled in (RTMPS) | Live Producer > Streaming software > Stream key (pick a persistent key) |
 
+**Log in with Twitch / YouTube** fetches the key instead of pasting it:
+Twitch shows a code to enter on its page; YouTube opens Google's sign-in
+(Google warns the app isn't verified: it's only registered for this
+channel's account, so press Continue) and uses the channel's reusable
+stream key, making one called "SCC Multistream" if there isn't one. Only
+the key is saved, so logging in again is only needed if the key changes.
+X and TikTok have no way for apps to fetch keys, and stay pasted. The
+login app IDs come from the repository's Actions secrets
+(`TWITCH_CLIENT_ID`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
+
 **+ Add another RTMP destination** takes any other RTMP/RTMPS server
 (Kick, a second YouTube channel, ...).
 

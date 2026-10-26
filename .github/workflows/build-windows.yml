@@ -46,6 +46,13 @@ jobs:
           Set-Content multistream/version.py "VERSION = `"$env:VERSION`"" -Encoding utf8
           Get-Content multistream/version.py
 
+      - name: Add the login app IDs (from the repository's Actions secrets)
+        run: python tools/stamp_oauth_ids.py
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+
       - name: Build SCCMultistream.exe
         run: pyinstaller --noconfirm SCCMultistream.spec
 
