@@ -63,7 +63,7 @@ def smoke_test(port, rtmp_port=19350, api_port=19987, timeout=60):
     publisher = None
     try:
         start(app, port)
-        for path in ("/", "/api/state", "/update.js", "/fonts/Inter.ttf", "/assets/st-clair-saints.png"):
+        for path in ("/", "/api/state", "/update.js", "/fonts/Inter.ttf", "/assets/st-clair-saints.png", "/assets/platforms/youtube.png"):
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as r:
                     check(path, True, f"{len(r.read())} bytes")
