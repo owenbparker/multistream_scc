@@ -22,3 +22,15 @@ def log(message, level="info"):
 def since(after_id=0):
     with _lock:
         return [e for e in _lines if e["id"] > after_id]
+
+
+_once = {}
+
+
+def log_once(key, message, level="warn", every=60.0):
+    """log(), at most once a minute (every) for the same key: for errors in
+    loops that run many times a second, which used to be dropped silently."""
+    now = time.time()
+    if now - _once.get(key, 0.0) >= every:
+        _once[key] = now
+        log(message, level)
