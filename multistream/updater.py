@@ -29,6 +29,28 @@ LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 ASSET_NAME = "SCCMultistream-windows.zip"
 UPDATE_DIR = os.path.join(DATA_DIR, "_update")
 
+# The version the last update replaced, kept so the app can go back to it.
+PREVIOUS_DIR = os.path.join(os.path.dirname(UPDATE_DIR), "_previous")
+PREVIOUS_MARK = "scc-previous-version.txt"
+# A file of this name next to the app opts it into test builds (GitHub
+# pre-releases, published from branches other than main). Delete it to go
+# back to normal releases only.
+TEST_CHANNEL_FILE = os.path.join(os.path.dirname(UPDATE_DIR), "test-channel.txt")
+
+
+def previous_version():
+    """The version kept by the last update (what "Go back" restores), or None."""
+    try:
+        with open(os.path.join(PREVIOUS_DIR, PREVIOUS_MARK), encoding="utf-8") as f:
+            version = f.read().strip()
+    except OSError:
+        return None
+    return version if version and os.path.isdir(os.path.join(PREVIOUS_DIR, "_internal")) else None
+
+
+def test_channel():
+    return os.path.isfile(TEST_CHANNEL_FILE)
+
 
 def parse_version(text):
     """"v1.0.12" -> (1, 0, 12). Anything unnumbered (a dev build) -> (0,)."""
@@ -55,12 +77,25 @@ class Updater:
         self.on_exit = None       # set by the window, to close it for the restart
         self.work_dir = UPDATE_DIR
         self._lock = threading.Lock()
+        # Set by the app: says why now is a bad time to restart (a match on),
+        # or returns None. Updating and going back wait until it is None.
+        self.busy = None
 
     def info(self):
+        previous = previous_version()
         return {"current": self.current, "latest": self.latest, "notes": self.notes,
                 "available": bool(self.latest and self.asset and is_newer(self.latest, self.current)),
                 "can_install": self.can_install, "status": self.status,
-                "progress": self.progress, "error": self.error, "check_error": self.check_error}
+                "progress": self.progress, "error": self.error, "check_error": self.check_error,
+                "previous": previous if previous != self.current else None,
+                "channel": "test" if test_channel() else "stable", "busy": self._busy()}
+
+    def _busy(self):
+        try:
+            return (self.busy() if self.busy else None) or None
+        except Exception as e:
+            log(f"Couldn't tell whether a match is on: {e!r}", "warn")
+            return None
 
     # --- checking --------------------------------------------------------
 
@@ -70,10 +105,12 @@ class Updater:
     def check(self):
         self.status, self.error, self.check_error = "checking", None, None
         try:
-            request = urllib.request.Request(LATEST_URL, headers={
+            request = urllib.request.Request(LATEST_URL if not test_channel() else LATEST_URL.replace("/releases/latest", "/releases?per_page=1"), headers={
                 "Accept": "application/vnd.github+json", "User-Agent": f"SCC-Multistream/{self.current}"})
             with urllib.request.urlopen(request, timeout=10) as r:
                 release = json.loads(r.read().decode("utf-8"))
+                if isinstance(release, list):   # (test channel: the newest build, test or not)
+                    release = release[0] if release else {}
         except urllib.error.HTTPError as e:
             self.status = "idle"
             if e.code == 404:
@@ -103,6 +140,9 @@ class Updater:
             raise ValueError("Updates can only be installed in the desktop app")
         if not self.info()["available"]:
             raise ValueError("No update available")
+        busy = self._busy()
+        if busy:
+            raise ValueError(f"{busy}. Update once it's over (updating restarts the app).")
         with self._lock:
             if self.status in ("downloading", "installing"):
                 return
@@ -169,18 +209,73 @@ class Updater:
     def _write_script(self, new_dir):
         app_dir = os.path.dirname(os.path.abspath(sys.executable))
         script = os.path.join(self.work_dir, "apply-update.bat")
+        prev = PREVIOUS_DIR
+        keep = "".join(f'copy /y "{app_dir}\\{n}" "{prev}\\{n}" >nul\n' for n in sorted(os.listdir(new_dir) if os.path.isdir(new_dir) else [])
+                       if os.path.isfile(os.path.join(new_dir, n)))
         with open(script, "w", encoding="utf-8") as f:
             f.write(f"""@echo off
 rem SCC Multistream updater: waits for the app to close, copies in the new
 rem version, then restarts it.
 :wait
 tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)
+rem Keep the running version, so the app can go back to it ("Go back to ...")
+if exist "{prev}" rmdir /s /q "{prev}"
+robocopy "{app_dir}\\_internal" "{prev}\\_internal" /MIR /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul
+{keep}echo {self.current}> "{prev}\\{PREVIOUS_MARK}"
 robocopy "{new_dir}\\_internal" "{app_dir}\\_internal" /MIR /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul
 robocopy "{new_dir}" "{app_dir}" /XD _internal /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul
 start "" "{app_dir}\\SCCMultistream.exe"
 """)
         return script
 
+
+    # --- going back ------------------------------------------------------
+
+    def rollback_in_background(self):
+        """Put back the version the last update replaced (kept in _previous)
+        and restart into it."""
+        if not self.can_install:
+            raise ValueError("Going back only works in the desktop app")
+        previous = previous_version()
+        if not previous or previous == self.current:
+            raise ValueError("There's no earlier version kept to go back to")
+        busy = self._busy()
+        if busy:
+            raise ValueError(f"{busy}. Go back once it's over (it restarts the app).")
+        with self._lock:
+            if self.status in ("downloading", "installing"):
+                return
+            self.status, self.error = "installing", None
+        try:
+            os.makedirs(UPDATE_DIR, exist_ok=True)
+            self.work_dir = os.path.join(UPDATE_DIR, f"go-back-{int(time.time())}")
+            os.makedirs(self.work_dir)
+            script = self._write_rollback_script()
+            log(f"Going back to {previous} - the app will restart")
+            subprocess.Popen(["cmd", "/c", script], cwd=os.path.dirname(os.path.abspath(sys.executable)),
+                             creationflags=0x08000000 | 0x00000200)
+        except Exception as e:
+            self.status, self.error = "error", f"{type(e).__name__}: {e}"
+            log(f"Going back failed: {self.error}", "error")
+            raise
+        threading.Thread(target=lambda: (time.sleep(0.5), (self.on_exit or (lambda: os._exit(0)))()), daemon=True).start()
+
+    def _write_rollback_script(self):
+        app_dir = os.path.dirname(os.path.abspath(sys.executable))
+        prev = PREVIOUS_DIR
+        script = os.path.join(self.work_dir, "go-back.bat")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(f"""@echo off
+rem Goes back to the version the last update replaced: waits for the app to
+rem close, copies the kept version in (settings and data are left alone),
+rem then restarts it.
+:wait
+tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)
+robocopy "{prev}\\_internal" "{app_dir}\\_internal" /MIR /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul
+robocopy "{prev}" "{app_dir}" /XD _internal /XF {PREVIOUS_MARK} /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul
+start "" "{app_dir}\\SCCMultistream.exe"
+""")
+        return script
 
 def clean_up_old_update():
     """Remove the previous update's download once the new version is running.

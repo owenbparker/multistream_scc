@@ -156,6 +156,8 @@ def make_handler(app):
                     app.updater.check()
                 elif path == "/api/update/install":
                     app.updater.install_in_background()
+                elif path == "/api/update/rollback":
+                    app.updater.rollback_in_background()
                 else:
                     return self._json({"error": "not found"}, 404)
                 app.relay.poke()

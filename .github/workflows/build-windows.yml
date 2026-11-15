@@ -5,6 +5,8 @@
 # offers to update itself.
 #
 # A commit with [no release] in its message builds and tests without publishing.
+# Only pushes to main publish a normal release; other branches publish a
+# test build (pre-release) that installed apps never update to.
 #
 # Every run also leaves the zip on the run's summary page (Actions tab).
 name: Build Windows app
@@ -22,6 +24,10 @@ jobs:
     runs-on: windows-latest
     env:
       VERSION: v1.0.${{ github.run_number }}
+      # Only main makes a normal (stable) release, the one installed apps update to.
+      # Any other branch publishes a test build: a GitHub pre-release, which the
+      # apps' update check (releases/latest) and the installer never pick up.
+      CHANNEL: ${{ github.ref == 'refs/heads/main' && 'stable' || 'test' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -98,7 +104,8 @@ jobs:
           Compress-Archive -Path dist\SCCMultistream\* -DestinationPath SCCMultistream-windows.zip
           $notes = git log -1 --format=%B | Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' }
           $notes = ($notes -join "`n").Trim()
-          gh release create "$env:VERSION" SCCMultistream-windows.zip dist\SCC-Multistream-Setup.exe --target "${{ github.sha }}" --title "SCC Multistream $env:VERSION" --notes "$notes"
+          $pre = @(); if ($env:CHANNEL -eq 'test') { $pre = @('--prerelease'); $notes = "Test build from ${{ github.ref_name }}: installed apps don't update to it.`n`n" + $notes }
+          gh release create "$env:VERSION" SCCMultistream-windows.zip dist\SCC-Multistream-Setup.exe --target "${{ github.sha }}" --title "SCC Multistream $env:VERSION" --notes "$notes" @pre
         env:
           GH_TOKEN: ${{ github.token }}
 

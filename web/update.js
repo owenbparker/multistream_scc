@@ -51,5 +51,28 @@ function updateButton(button, version) {
       setTimeout(() => info && render(info), 4100);
     }
   };
+  // "Go back to vX": the version the last update replaced, kept beside the
+  // app. Shown once there is one; restarts the app into it.
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = button.className;
+  back.classList.add("check", "go-back");
+  back.hidden = true;
+  back.style.marginLeft = "6px";
+  button.after(back);
+  back.onclick = () => {
+    const u = info;
+    if (!u || !u.previous) return;
+    if (confirm(`Go back to ${u.previous}?\n\nThis puts back the version you had before the last update. The app will close and reopen (about 10 seconds). Your settings and files are kept.`))
+      post("/api/update/rollback");
+  };
+  const drawButton = render;
+  render = function (u) {
+    drawButton(u);
+    back.hidden = !(u.previous && u.can_install) || u.status === "downloading" || u.status === "installing";
+    back.textContent = `↩ Go back to ${u.previous || ""}`;
+    if (u.channel === "test") version.textContent += " (test builds)";
+    if (u.busy && u.available) button.title = `${u.busy}: update once it's over`;
+  };
   return render;
 }
