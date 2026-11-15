@@ -160,3 +160,7 @@ skips publishing.
 
 MediaMTX (MIT) and FFmpeg (GPL, gyan.dev essentials build) are bundled
 unchanged; their licenses are in `_internal\bin\licenses`.
+
+## Releases
+
+Normal releases (the ones installed apps update to) are built from the `main` branch. Work branches publish test builds (GitHub pre-releases) that installed apps never pick up.
